@@ -1,29 +1,10 @@
 import { GoogleGenAI, Type } from '@google/genai';
-
-export interface GenerateTemplateParams {
-  targetAudience: string;
-  reasonForOutreach: string;
-  offering: string;
-  tone: string;
-  model?: string;
-  temperature?: number;
-  maxTokens?: number;
-}
-
-export interface LeadData {
-  name?: string;
-  company?: string;
-  industry?: string;
-  bioSnippet?: string;
-}
-
-export interface RegenerateLeadEmailParams {
-  baseTemplate: string;
-  leadData: LeadData;
-  model?: string;
-  temperature?: number;
-  maxTokens?: number;
-}
+import { 
+  GenerateTemplateParams, 
+  GeminiLeadData as LeadData, 
+  RegenerateLeadEmailParams, 
+  GenerateBatchParams 
+} from '@/types';
 
 const FLATTERY_BLACKLIST = [
   "hope this email finds you well",
@@ -231,9 +212,6 @@ export async function regenerateLeadEmail(params: RegenerateLeadEmailParams): Pr
   return geminiQueue.enqueue(() => generateWithRetry(prompt, modelName, params, false));
 }
 
-export interface GenerateBatchParams extends GenerateTemplateParams {
-  leads: LeadData[];
-}
 
 function buildBatchPrompt(params: GenerateBatchParams): string {
   const bannedPhrases = FLATTERY_BLACKLIST.map(p => `"${p}"`).join(", ");

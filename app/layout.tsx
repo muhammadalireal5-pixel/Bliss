@@ -18,9 +18,7 @@ export const metadata: Metadata = {
   description: "AI-powered personalized email outreach platform",
 };
 
-interface RootLayoutProps {
-  children: React.ReactNode;
-}
+import { RootLayoutProps } from "@/types";
 
 import SessionProviderWrapper from "@/components/SessionProviderWrapper";
 

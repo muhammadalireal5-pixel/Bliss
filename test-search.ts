@@ -13,7 +13,7 @@ async function run() {
   const data = await res.json();
   console.log("Total organic:", data.organic?.length);
   
-  const filtered = data.organic?.filter(r => r.link.includes('linkedin.com/in/') || r.link.includes('twitter.com/'));
+  const filtered = data.organic?.filter((r: any) => r.link.includes('linkedin.com/in/') || r.link.includes('twitter.com/'));
   console.log("Filtered organic:", filtered?.length);
   
   if (filtered && filtered.length > 0) {

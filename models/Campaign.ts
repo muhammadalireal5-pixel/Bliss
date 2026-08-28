@@ -1,12 +1,6 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
-export interface ICampaign extends Document {
-  targetAudience: string;
-  reasonForOutreach: string;
-  offering: string;
-  userId: string;
-  createdAt: Date;
-}
+import { ICampaign } from '@/types';
 
 const CampaignSchema = new Schema<ICampaign>(
   {

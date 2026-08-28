@@ -53,7 +53,7 @@ export async function POST(req: Request) {
     }
 
     const data = await response.json();
-    let leads: { name: string; email: string; profileUrl: string; source: string }[] = [];
+    let leads: { name: string; email: string; profileUrl: string; source: string; summary?: string }[] = [];
 
     if (Array.isArray(data.organic) && data.organic.length > 0) {
       try {

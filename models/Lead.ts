@@ -1,16 +1,6 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
 
-export interface ILead extends Document {
-  campaignId: mongoose.Types.ObjectId;
-  name: string;
-  email: string;
-  profileUrl?: string;
-  source?: string; // e.g., LinkedIn, Reddit, Generic Web
-  summary?: string;
-  draftEmail: string;
-  status: 'draft' | 'sent' | 'bounced';
-  createdAt: Date;
-}
+import { ILead } from '@/types';
 
 const LeadSchema = new Schema<ILead>(
   {
