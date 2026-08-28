@@ -1,4 +1,25 @@
 import { NextResponse } from 'next/server';
+import { GoogleGenAI, Type } from '@google/genai';
+
+function buildQuery(targetAudience: string) {
+  const platforms = [
+    { keywords: ['engineer', 'developer', 'programmer', 'software'], platform: 'site:github.com' },
+    { keywords: ['writer', 'blogger', 'journalist', 'content'], platform: 'site:medium.com' },
+    { keywords: ['designer', 'ux', 'ui', 'illustrator'], platform: 'site:dribbble.com' },
+  ];
+
+  const lowerAudience = targetAudience.toLowerCase();
+  const activePlatforms = ['site:linkedin.com/in/', 'site:twitter.com/'];
+  
+  for (const { keywords, platform } of platforms) {
+    if (keywords.some(kw => lowerAudience.includes(kw))) {
+      activePlatforms.push(platform);
+    }
+  }
+
+  const platformsString = activePlatforms.join(' OR ');
+  return `(${platformsString}) ${targetAudience} ("@gmail.com" OR "@yahoo.com" OR "@hotmail.com" OR "@outlook.com")`;
+}
 
 export async function POST(req: Request) {
   try {
@@ -13,10 +34,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Search API key is not configured' }, { status: 500 });
     }
 
-    // Google Dorking to find targeted profiles
-    // We remove exact-match quotes around targetAudience so a search like "Software Engineer in Tokyo"
-    // matches "Software Engineer | Tokyo" without requiring the exact phrase "in Tokyo" in the title.
-    const query = `(site:linkedin.com/in/ OR site:twitter.com/) ${targetAudience} ("@gmail.com" OR "@yahoo.com" OR "@hotmail.com" OR "@outlook.com")`;
+    const query = buildQuery(targetAudience);
 
     const response = await fetch('https://google.serper.dev/search', {
       method: 'POST',
@@ -35,47 +53,117 @@ export async function POST(req: Request) {
     }
 
     const data = await response.json();
-    const leads: { name: string; email: string; profileUrl: string; source: string }[] = [];
+    let leads: { name: string; email: string; profileUrl: string; source: string }[] = [];
 
-    const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-
-    if (Array.isArray(data.organic)) {
-      data.organic.forEach((result: any) => {
-        const url = result.link || '';
-        
-        // STRICT FILTER: Only allow LinkedIn or Twitter profiles. Completely block YouTube, articles, etc.
-        if (!url.includes('linkedin.com/in/') && !url.includes('twitter.com/')) {
-          return; // Skip this result
+    if (Array.isArray(data.organic) && data.organic.length > 0) {
+      try {
+        const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+        if (!GEMINI_API_KEY) {
+          throw new Error('GEMINI_API_KEY is not configured');
         }
 
-        const snippet = result.snippet || '';
-        const title = result.title || '';
-        
-        // Extract email from snippet
-        const emailMatch = snippet.match(emailRegex);
-        if (emailMatch && emailMatch.length > 0) {
-          const email = emailMatch[0];
-          
-          // Clean name extraction from LinkedIn/Twitter titles
-          let name = title.split('-')[0].trim();
-          if (name.includes('|')) name = name.split('|')[0].trim();
-          if (name.includes('...')) name = name.split('...')[0].trim(); // Remove truncation artifacts
-          if (!name || name.length > 40) name = 'Unknown';
-          
-          // Determine source
-          const source = url.includes('linkedin.com') ? 'LinkedIn' : 'Twitter';
+        const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+        const batch = data.organic.map((r: any) => ({
+          title: r.title,
+          snippet: r.snippet,
+          link: r.link
+        }));
 
-          // Prevent duplicates
-          if (!leads.some((l) => l.email === email)) {
-            leads.push({
-              name,
-              email: email.toLowerCase(),
-              profileUrl: result.link,
-              source,
-            });
+        const prompt = `Extract name, email, platform, profileUrl, and a brief 1-2 sentence summary/bio of the person from these search results. Return null for name or email if not confidently found. Do not hallucinate.
+${JSON.stringify(batch)}`;
+
+        const geminiResponse = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt,
+          config: {
+            temperature: 0,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING, nullable: true },
+                  email: { type: Type.STRING, nullable: true },
+                  platform: { 
+                    type: Type.STRING, 
+                    enum: ["linkedin", "twitter", "github", "medium", "dribbble", "other"] 
+                  },
+                  profileUrl: { type: Type.STRING },
+                  summary: { type: Type.STRING, nullable: true, description: "A brief 1-2 sentence bio or summary of who this person is based on the snippet." },
+                },
+                required: ["name", "email", "platform", "profileUrl"]
+              }
+            }
+          }
+        });
+
+        const content = geminiResponse.text;
+        if (!content) {
+          throw new Error('No valid content returned from Gemini.');
+        }
+
+        const parsed = JSON.parse(content);
+        
+        const seenEmails = new Set();
+        for (const l of parsed) {
+          if (l.email) {
+            const emailLower = l.email.toLowerCase();
+            if (!seenEmails.has(emailLower)) {
+              seenEmails.add(emailLower);
+              
+              let sourceName = 'Other';
+              if (l.platform === 'linkedin') sourceName = 'LinkedIn';
+              else if (l.platform !== 'other') sourceName = l.platform.charAt(0).toUpperCase() + l.platform.slice(1);
+              
+              leads.push({
+                name: l.name || 'Unknown',
+                email: emailLower,
+                profileUrl: l.profileUrl,
+                source: sourceName,
+                summary: l.summary || undefined
+              });
+            }
           }
         }
-      });
+      } catch (error) {
+        console.error('Gemini extraction failed, falling back to regex:', error);
+        
+        const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
+        
+        data.organic.forEach((result: any) => {
+          const url = result.link || '';
+          const snippet = result.snippet || '';
+          const title = result.title || '';
+          
+          const emailMatch = snippet.match(emailRegex);
+          if (emailMatch && emailMatch.length > 0) {
+            const email = emailMatch[0].toLowerCase();
+            
+            let name = title.split('-')[0].trim();
+            if (name.includes('|')) name = name.split('|')[0].trim();
+            if (name.includes('...')) name = name.split('...')[0].trim();
+            if (!name || name.length > 40) name = 'Unknown';
+            
+            let source = 'Other';
+            if (url.includes('linkedin.com')) source = 'LinkedIn';
+            else if (url.includes('twitter.com')) source = 'Twitter';
+            else if (url.includes('github.com')) source = 'Github';
+            else if (url.includes('medium.com')) source = 'Medium';
+            else if (url.includes('dribbble.com')) source = 'Dribbble';
+
+            if (!leads.some((l) => l.email === email)) {
+              leads.push({
+                name,
+                email,
+                profileUrl: url,
+                source,
+                summary: snippet.length > 150 ? snippet.slice(0, 150) + '...' : snippet
+              });
+            }
+          }
+        });
+      }
     }
 
     return NextResponse.json({ leads });

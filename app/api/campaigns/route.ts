@@ -2,9 +2,16 @@ import { NextResponse } from 'next/server';
 import connectToDatabase from '@/lib/db';
 import { Campaign } from '@/models/Campaign';
 import { Lead } from '@/models/Lead';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 
 export async function POST(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user || !(session.user as any).id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     await connectToDatabase();
     
     const { targetAudience, reasonForOutreach, offering, leads } = await req.json();
@@ -18,6 +25,7 @@ export async function POST(req: Request) {
       targetAudience,
       reasonForOutreach,
       offering,
+      userId: (session.user as any).id,
     });
 
     // 2. Create Leads associated with the Campaign
@@ -28,6 +36,7 @@ export async function POST(req: Request) {
         email: lead.email,
         profileUrl: lead.profileUrl,
         source: lead.source,
+        summary: lead.summary,
         draftEmail: lead.draftEmail,
         status: 'draft',
       }));

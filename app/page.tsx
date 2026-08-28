@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Search, 
   Send, 
@@ -15,12 +15,47 @@ import {
   PlusCircle, 
   Layers, 
   ArrowUpRight,
-  AlertCircle
+  AlertCircle,
+  Menu
 } from 'lucide-react';
 import Link from 'next/link';
 import { LeadData } from '@/types';
 
+import { useSession, signOut } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+
 export default function Home() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
+  // Redirect if not authenticated
+  useEffect(() => {
+    if (status === 'unauthenticated') {
+      router.push('/auth/signup');
+    }
+  }, [status, router]);
+
+  // Restore campaign from history if present
+  useEffect(() => {
+    const restoreData = sessionStorage.getItem('restoreCampaign');
+    if (restoreData) {
+      try {
+        const campaign = JSON.parse(restoreData);
+        setTargetAudience(campaign.targetAudience || '');
+        setReasonForOutreach(campaign.reasonForOutreach || '');
+        setOffering(campaign.offering || '');
+        setCampaignId(campaign._id || null);
+        if (campaign.leads && campaign.leads.length > 0) {
+          setLeads(campaign.leads);
+          setSelectedLeadIndex(0);
+        }
+      } catch (e) {
+        console.error('Failed to restore campaign', e);
+      }
+      sessionStorage.removeItem('restoreCampaign');
+    }
+  }, []);
+
   // Campaign inputs
   const [targetAudience, setTargetAudience] = useState('');
   const [reasonForOutreach, setReasonForOutreach] = useState('');
@@ -40,15 +75,43 @@ export default function Home() {
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [manualGenerating, setManualGenerating] = useState(false);
 
+  // Responsive UI state
+  const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
+  const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false);
+  
+  const [loadingMessage, setLoadingMessage] = useState('Initializing search...');
+
+  if (status === 'loading' || status === 'unauthenticated') {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#F5F6FA]">
+        <RefreshCw className="animate-spin text-[#D4F700]" size={32} />
+      </div>
+    );
+  }
+
   // Statistics
   const totalLeads = leads.length;
-  const sentLeads = leads.filter(l => l.status === 'sent').length;
+  const securedLeads = leads.filter(l => l.secured).length;
   const draftLeads = leads.filter(l => l.status === 'draft').length;
 
   const handleSearchAndGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsModalOpen(false);
     setLoading(true);
+
+    const messages = [
+      "Searching Google & LinkedIn...",
+      "Analyzing profiles with Gemini...",
+      "Extracting verified emails...",
+      "Synthesizing bio summaries...",
+      "Finalizing lead list..."
+    ];
+    let msgIndex = 0;
+    setLoadingMessage(messages[0]);
+    const msgInterval = setInterval(() => {
+      msgIndex = (msgIndex + 1) % messages.length;
+      setLoadingMessage(messages[msgIndex]);
+    }, 2500);
     try {
       // 1. Search for leads
       const searchRes = await fetch('/api/search', {
@@ -73,43 +136,35 @@ export default function Home() {
         return;
       }
 
-      // 2. Generate emails for each lead — track failures
+      // 2. Generate emails for all leads in one batch request
+      let leadsWithEmails: LeadData[] = [];
       let failedCount = 0;
-      const leadsWithEmails: LeadData[] = await Promise.all(
-        foundLeads.map(async (lead: any) => {
-          try {
-            const genRes = await fetch('/api/generate-email', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                name: lead.name,
-                targetAudience,
-                reasonForOutreach,
-                offering
-              })
-            });
-            
-            const genData = await genRes.json();
-            
-            if (!genRes.ok || genData.error) {
-              failedCount++;
-              return { 
-                ...lead, 
-                subject: `Opportunity for ${lead.name}`,
-                draftEmail: `Hi ${lead.name},\n\nI came across your profile and wanted to reach out regarding ${offering}.\n\nWould love to connect and discuss further.\n\nBest,\n[Your Name]`,
-                status: 'draft' as const,
-                generationFailed: true
-              };
-            }
 
-            return { 
-              ...lead, 
-              subject: genData.subject || `Opportunity for ${lead.name}`,
-              draftEmail: genData.draftEmail || '',
-              status: 'draft' as const,
-              generationFailed: false
-            };
-          } catch {
+      try {
+        const batchRes = await fetch('/api/generate-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'batch',
+            targetAudience,
+            reasonForOutreach,
+            offering,
+            tone: 'professional',
+            leads: foundLeads
+          })
+        });
+
+        const batchData = await batchRes.json();
+        
+        if (!batchRes.ok || batchData.error) {
+          throw new Error(batchData.error || 'Batch generation failed');
+        }
+
+        const generatedEmails = batchData.emails || [];
+        
+        leadsWithEmails = foundLeads.map((lead: any, index: number) => {
+          const gen = generatedEmails[index];
+          if (!gen || !gen.draftEmail) {
             failedCount++;
             return {
               ...lead,
@@ -119,8 +174,26 @@ export default function Home() {
               generationFailed: true
             };
           }
-        })
-      );
+          return {
+            ...lead,
+            subject: gen.subject || `Opportunity for ${lead.name}`,
+            draftEmail: gen.draftEmail,
+            status: 'draft' as const,
+            generationFailed: false
+          };
+        });
+
+      } catch (err: any) {
+        console.error('Batch generation error:', err);
+        failedCount = foundLeads.length;
+        leadsWithEmails = foundLeads.map((lead: any) => ({
+          ...lead,
+          subject: `Opportunity for ${lead.name}`,
+          draftEmail: `Hi ${lead.name},\n\nI came across your profile and wanted to reach out regarding ${offering}.\n\nWould love to connect and discuss further.\n\nBest,\n[Your Name]`,
+          status: 'draft' as const,
+          generationFailed: true
+        }));
+      }
 
       setLeads(leadsWithEmails);
       if (leadsWithEmails.length > 0) {
@@ -157,6 +230,7 @@ export default function Home() {
       console.error(err.message || 'An error occurred during lead generation');
       return;
     } finally {
+      clearInterval(msgInterval);
       setLoading(false);
     }
   };
@@ -354,8 +428,16 @@ export default function Home() {
   return (
     <div className="flex h-screen bg-[#F5F6FA] text-slate-800 overflow-hidden font-sans">
       
-      {/* LEFT SIDEBAR (Dark Theme) */}
-      <aside className="w-80 bg-zinc-950 text-white flex flex-col h-full border-r border-zinc-800 z-10">
+      {/* Mobile Overlays */}
+      {isLeftSidebarOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsLeftSidebarOpen(false)} />
+      )}
+      {isRightSidebarOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsRightSidebarOpen(false)} />
+      )}
+
+      {/* LEFT SIDEBAR (Dark Theme - Lead Management) */}
+      <aside className={`fixed lg:relative inset-y-0 left-0 z-50 w-80 bg-zinc-950 text-white flex flex-col h-full border-r border-zinc-800 transform transition-transform duration-300 lg:transform-none ${isLeftSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         {/* Brand Logo & Nav */}
         <div className="p-5 flex items-center justify-between border-b border-zinc-800">
           <div className="flex items-center gap-3">
@@ -388,8 +470,8 @@ export default function Home() {
               <span className="text-xl font-bold block mt-0.5 text-zinc-100">{totalLeads}</span>
             </div>
             <div className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-800/80">
-              <span className="text-[10px] text-zinc-400 block font-medium">SENT</span>
-              <span className="text-xl font-bold block mt-0.5 text-emerald-400">{sentLeads}</span>
+              <span className="text-[10px] text-zinc-400 block font-medium">SECURED</span>
+              <span className="text-xl font-bold block mt-0.5 text-emerald-400">{securedLeads}</span>
             </div>
           </div>
         </div>
@@ -410,9 +492,9 @@ export default function Home() {
         {/* Lead List Scroll Area */}
         <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-10 space-y-2 text-zinc-400">
+            <div className="flex flex-col items-center justify-center py-10 space-y-3 text-zinc-400">
               <RefreshCw className="animate-spin text-[#D4F700]" size={24} />
-              <span className="text-xs">Searching profiles...</span>
+              <span className="text-xs animate-pulse text-center px-4 leading-relaxed">{loadingMessage}</span>
             </div>
           ) : leads.length === 0 ? (
             <div className="text-center text-zinc-500 py-12 px-4 text-xs">
@@ -463,11 +545,11 @@ export default function Home() {
                           FALLBACK
                         </span>
                       )}
-                      {lead.status === 'sent' ? (
+                      {lead.secured ? (
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
                           isSelected ? 'bg-black text-emerald-400' : 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/20'
                         }`}>
-                          SENT
+                          SECURED
                         </span>
                       ) : (
                         <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
@@ -488,21 +570,57 @@ export default function Home() {
             })
           )}
         </div>
+
+        {/* User Profile Footer */}
+        <div className="p-4 border-t border-zinc-800 bg-zinc-950 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-bold text-zinc-300 shrink-0">
+              {session?.user?.name?.charAt(0)?.toUpperCase() || '?'}
+            </div>
+            <div className="truncate">
+              <p className="text-xs font-semibold text-zinc-200 truncate">{session?.user?.name || 'User'}</p>
+              <p className="text-[10px] text-zinc-500 truncate">{session?.user?.email}</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => signOut()}
+            className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-zinc-900 rounded-lg transition"
+            title="Sign Out"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </aside>
 
       {/* CENTER PANEL (Email Editor Area) */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden">
+      <main className="flex-1 flex flex-col h-full overflow-hidden w-full relative">
         {/* Top Header */}
-        <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-8 shrink-0">
-          <div className="flex items-center gap-2 text-slate-500 text-xs font-medium">
-            <span>Workspace</span>
-            <ChevronRight size={12} />
-            <span className="text-slate-800 font-semibold">AI Lead Outreach</span>
+        <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-4 lg:px-8 shrink-0">
+          <div className="flex items-center gap-3">
+            <button 
+              className="lg:hidden p-2 -ml-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+              onClick={() => setIsLeftSidebarOpen(true)}
+            >
+              <Menu size={20} />
+            </button>
+            <div className="flex items-center gap-2 text-slate-500 text-xs font-medium">
+              <span>Workspace</span>
+              <ChevronRight size={12} />
+              <span className="text-slate-800 font-semibold">AI Lead Outreach</span>
+            </div>
           </div>
           
           <div className="flex items-center gap-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-xs font-semibold text-slate-600">OpenRouter AI</span>
+            <div className="hidden sm:flex items-center gap-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="text-xs font-semibold text-slate-600">Gemini Flash</span>
+            </div>
+            <button 
+              className="lg:hidden p-2 -mr-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+              onClick={() => setIsRightSidebarOpen(true)}
+            >
+              <Layers size={20} />
+            </button>
           </div>
         </header>
 
@@ -523,38 +641,98 @@ export default function Home() {
               )}
 
               {/* Recipient Profile Info */}
-              <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-2xl bg-[#D4F700]/20 flex items-center justify-center text-lg font-bold text-black border border-[#D4F700]/50">
+              {/* Recipient Profile Info */}
+              <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col xl:flex-row xl:items-start justify-between gap-6">
+                <div className="flex items-start gap-4 shrink-0 max-w-full">
+                  <div className="w-14 h-14 rounded-2xl bg-[#D4F700]/20 flex items-center justify-center text-xl font-bold text-black border border-[#D4F700]/50 shrink-0 mt-1">
                     {getInitials(activeLead.name)}
                   </div>
-                  <div>
-                    <h2 className="text-lg font-bold text-slate-900">{activeLead.name}</h2>
-                    <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                      <span>{activeLead.email}</span>
-                      <span>•</span>
-                      <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-semibold text-[10px]">{activeLead.source || 'Web'}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h2 className="text-xl font-bold text-slate-900 truncate">{activeLead.name}</h2>
+                      <span className="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md font-semibold text-[10px] shrink-0 border border-slate-200">{activeLead.source || 'Web'}</span>
+                      {activeLead.profileUrl && (
+                        <a 
+                          href={activeLead.profileUrl} 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-red-500 transition"
+                        >
+                          Profile <ArrowUpRight size={12} />
+                        </a>
+                      )}
                     </div>
+                    
+                    {/* Metadata Row: Email + Copy */}
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      <div className="flex items-center gap-2 bg-slate-50 pl-3 pr-2 py-1.5 rounded-lg border border-slate-200">
+                        <span className="text-xs font-mono text-slate-700 font-medium">{activeLead.email}</span>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(activeLead.email);
+                          }}
+                          className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-md transition"
+                          title="Copy Email Address"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    {activeLead.summary && (
+                      <p className="text-[11px] text-slate-600 mt-3 max-w-lg leading-relaxed border-l-2 border-[#D4F700] pl-3 py-0.5 italic">
+                        {activeLead.summary}
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                {activeLead.profileUrl && (
-                  <a 
-                    href={activeLead.profileUrl} 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="flex items-center gap-1.5 text-xs font-semibold text-red-500 hover:underline px-3 py-1.5 bg-red-50 rounded-xl transition"
-                  >
-                    View Source Profile <ArrowUpRight size={14} />
-                  </a>
-                )}
+                <div className="flex xl:flex-col items-center xl:items-end justify-between xl:justify-start gap-4 w-full xl:w-auto pt-2 xl:pt-0">
+                  {/* Proper Secured Toggle Switch */}
+                  <label className="flex items-center gap-3 cursor-pointer group">
+                    <span className={`text-xs font-bold tracking-wide transition-colors ${activeLead.secured ? 'text-emerald-600' : 'text-slate-500 group-hover:text-slate-700'}`}>SECURED</span>
+                    <div className={`relative w-11 h-6 rounded-full transition-colors duration-300 ease-in-out border ${
+                      activeLead.secured 
+                        ? 'bg-emerald-500 border-emerald-600' 
+                        : 'bg-slate-200 border-slate-300 group-hover:bg-slate-300'
+                    }`}>
+                      <div className={`absolute top-[2px] left-[2px] bg-white w-4 h-4 rounded-full transition-transform duration-300 ease-in-out shadow-sm flex items-center justify-center ${
+                        activeLead.secured ? 'translate-x-5' : 'translate-x-0'
+                      }`}>
+                        {activeLead.secured && (
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" className="text-emerald-600" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        )}
+                      </div>
+                    </div>
+                    <input 
+                      type="checkbox" 
+                      className="hidden" 
+                      checked={!!activeLead.secured}
+                      onChange={(e) => {
+                        const idx = selectedLeadIndex;
+                        if (idx === null) return;
+                        setLeads(prev => {
+                          const updated = [...prev];
+                          updated[idx] = { ...updated[idx], secured: e.target.checked };
+                          return updated;
+                        });
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
 
               {/* Subject & Draft Editor Box */}
-              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                <div className="p-4 bg-slate-50/80 border-b border-slate-100 space-y-3">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-semibold text-slate-500 w-16">Subject:</span>
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+                <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 space-y-3">
+                  <div className="flex items-center gap-4">
+                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider w-16 text-right">To</label>
+                    <div className="flex items-center">
+                      <span className="text-xs font-mono bg-white border border-slate-200 px-2.5 py-1 rounded-md text-slate-700 font-semibold">{activeLead.email}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider w-16 text-right">Subject</label>
                     <input 
                       type="text" 
                       value={activeLead.subject || ''} 
@@ -568,12 +746,8 @@ export default function Home() {
                         });
                       }}
                       placeholder="Email Subject"
-                      className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
+                      className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D4F700]/50 focus:border-[#D4F700] transition-shadow"
                     />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-semibold text-slate-500 w-16">To:</span>
-                    <span className="text-xs font-mono bg-slate-200/60 px-2 py-1 rounded text-slate-700 font-semibold">{activeLead.email}</span>
                   </div>
                 </div>
 
@@ -581,13 +755,13 @@ export default function Home() {
                 <div className="p-6 relative">
                   {activeLead.regenerating && (
                     <div className="absolute inset-0 bg-white/80 z-10 flex flex-col items-center justify-center space-y-2">
-                      <RefreshCw className="animate-spin text-red-500" size={32} />
+                      <RefreshCw className="animate-spin text-black" size={32} />
                       <span className="text-xs font-semibold text-slate-500">Drafting personalized email...</span>
                     </div>
                   )}
 
                   <textarea
-                    className="w-full h-80 bg-slate-50/50 p-4 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 font-mono leading-relaxed"
+                    className="w-full h-80 bg-slate-50/50 p-4 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#D4F700]/40 focus:border-[#D4F700] font-mono leading-relaxed transition-shadow"
                     value={activeLead.draftEmail}
                     onChange={(e) => {
                       const idx = selectedLeadIndex;
@@ -626,21 +800,10 @@ export default function Home() {
                     </button>
                     
                     <button 
-                      onClick={() => {
-                        if (selectedLeadIndex !== null) sendEmail(selectedLeadIndex);
-                      }}
-                      disabled={activeLead.status === 'sent' || activeLead.sending}
-                      className="flex items-center gap-1.5 px-5 py-2 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-xl shadow-md shadow-red-500/10 transition disabled:opacity-50"
+                      disabled={true}
+                      className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-slate-200 text-slate-400 rounded-xl transition cursor-not-allowed border border-slate-200"
                     >
-                      {activeLead.sending ? (
-                        <>
-                          <RefreshCw className="animate-spin" size={14} /> Sending...
-                        </>
-                      ) : (
-                        <>
-                          <Send size={14} /> Send Email
-                        </>
-                      )}
+                      <Send size={14} /> Send (Available Soon)
                     </button>
                   </div>
                 </div>
@@ -662,7 +825,7 @@ export default function Home() {
       </main>
 
       {/* RIGHT PANEL (Campaign Summary & Actions) */}
-      <aside className="w-80 bg-white border-l border-slate-200 p-6 flex flex-col h-full overflow-y-auto shrink-0">
+      <aside className={`fixed lg:relative inset-y-0 right-0 z-50 w-80 bg-white border-l border-slate-200 p-6 flex flex-col h-full overflow-y-auto shrink-0 transform transition-transform duration-300 lg:transform-none ${isRightSidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}>
         <h3 className="text-sm font-bold tracking-tight text-slate-900 mb-4 flex items-center gap-2">
           <Layers size={16} className="text-[#D4F700]" /> Campaign Summary
         </h3>
@@ -677,12 +840,12 @@ export default function Home() {
 
             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Reason</span>
-              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{reasonForOutreach}</p>
+              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed max-h-32 overflow-y-auto">{reasonForOutreach}</p>
             </div>
 
             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Offering</span>
-              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{offering}</p>
+              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed max-h-32 overflow-y-auto">{offering}</p>
             </div>
 
             {/* Campaign Stats Card */}
@@ -692,28 +855,26 @@ export default function Home() {
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between text-xs font-semibold">
-                  <span className="text-slate-600">Sent Emails</span>
-                  <span className="text-slate-900">{sentLeads} / {totalLeads}</span>
+                  <span className="text-slate-600">Secured Leads</span>
+                  <span className="text-slate-900">{securedLeads} / {totalLeads}</span>
                 </div>
                 {/* Progress bar */}
                 <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
                   <div 
                     className="bg-emerald-500 h-2 rounded-full transition-all duration-500" 
-                    style={{ width: `${totalLeads > 0 ? (sentLeads / totalLeads) * 100 : 0}%` }}
+                    style={{ width: `${totalLeads > 0 ? (securedLeads / totalLeads) * 100 : 0}%` }}
                   />
                 </div>
               </div>
             </div>
             
             {/* Bulk Send CTA */}
-            {draftLeads > 0 && (
-              <button 
-                onClick={sendAllEmails}
-                className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 transition-all shadow-md shadow-red-500/10 text-sm"
-              >
-                <Send size={16} /> Send All Drafts ({draftLeads})
-              </button>
-            )}
+            <button 
+              disabled={true}
+              className="w-full bg-slate-200 border border-slate-200 text-slate-400 font-bold py-3 px-4 rounded-2xl flex items-center justify-center gap-2 text-sm cursor-not-allowed"
+            >
+              <Send size={16} /> Send All Drafts (Available Soon)
+            </button>
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center py-20 text-slate-400">

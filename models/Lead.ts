@@ -6,6 +6,7 @@ export interface ILead extends Document {
   email: string;
   profileUrl?: string;
   source?: string; // e.g., LinkedIn, Reddit, Generic Web
+  summary?: string;
   draftEmail: string;
   status: 'draft' | 'sent' | 'bounced';
   createdAt: Date;
@@ -18,6 +19,7 @@ const LeadSchema = new Schema<ILead>(
     email: { type: String, required: true },
     profileUrl: { type: String },
     source: { type: String },
+    summary: { type: String },
     draftEmail: { type: String, default: '' }, // Not required — allows empty strings when AI fails
     status: { type: String, enum: ['draft', 'sent', 'bounced'], default: 'draft' },
   },

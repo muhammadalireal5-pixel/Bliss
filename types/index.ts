@@ -3,10 +3,12 @@ export interface LeadData {
   email: string;
   source?: string;
   profileUrl?: string;
+  summary?: string;
   subject: string;
   draftEmail: string;
   status: 'draft' | 'sent';
   regenerating?: boolean;
   sending?: boolean;
   generationFailed?: boolean;
+  secured?: boolean;
 }

@@ -2,13 +2,20 @@ import { NextResponse } from 'next/server';
 import connectToDatabase from '@/lib/db';
 import { Campaign } from '@/models/Campaign';
 import { Lead } from '@/models/Lead';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 
 export async function GET() {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user || !(session.user as any).id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     await connectToDatabase();
     
-    // Fetch all campaigns sorted by newest first
-    const campaigns = await Campaign.find({}).sort({ createdAt: -1 }).lean();
+    // Fetch all campaigns for THIS USER sorted by newest first
+    const campaigns = await Campaign.find({ userId: (session.user as any).id }).sort({ createdAt: -1 }).lean();
     
     // Batch fetch all leads to avoid N+1 query problem
     const campaignIds = campaigns.map(c => c._id);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { 
   ArrowLeft, 
@@ -10,18 +10,35 @@ import {
   RefreshCw, 
   History, 
   FileText, 
-  ExternalLink 
+  ExternalLink,
+  Menu
 } from 'lucide-react';
 
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
+
 export default function HistoryPage() {
+  const { status } = useSession();
+  const router = useRouter();
+
+  // Redirect if not authenticated
+  useEffect(() => {
+    if (status === 'unauthenticated') {
+      router.push('/auth/signup');
+    }
+  }, [status, router]);
+
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCampaignIndex, setSelectedCampaignIndex] = useState<number | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [hasFetched, setHasFetched] = useState(false);
 
   // Fetch history on client mount only
-  const [hasFetched, setHasFetched] = useState(false);
-  if (typeof window !== 'undefined' && !hasFetched) {
+  useEffect(() => {
+    if (status !== 'authenticated' || hasFetched) return;
+    
     setHasFetched(true);
     fetch('/api/history')
       .then((res) => {
@@ -41,6 +58,14 @@ export default function HistoryPage() {
         setError(err.message || 'Failed to load history');
       })
       .finally(() => setLoading(false));
+  }, [hasFetched, status]);
+
+  if (status === 'loading' || status === 'unauthenticated') {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#F5F6FA]">
+        <RefreshCw className="animate-spin text-[#D4F700]" size={32} />
+      </div>
+    );
   }
 
   const activeCampaign = selectedCampaignIndex !== null ? history[selectedCampaignIndex] : null;
@@ -54,8 +79,13 @@ export default function HistoryPage() {
   return (
     <div className="flex h-screen bg-[#F5F6FA] text-slate-800 overflow-hidden font-sans">
       
+      {/* Mobile Overlay */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />
+      )}
+
       {/* LEFT SIDEBAR (Dark Theme - Campaign History List) */}
-      <aside className="w-80 bg-zinc-950 text-white flex flex-col h-full border-r border-zinc-800 z-10">
+      <aside className={`fixed lg:relative inset-y-0 left-0 z-50 w-80 bg-zinc-950 text-white flex flex-col h-full border-r border-zinc-800 transform transition-transform duration-300 lg:transform-none ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         {/* Brand Logo & Back to App Link */}
         <div className="p-5 flex items-center justify-between border-b border-zinc-800">
           <Link href="/" className="flex items-center gap-2 text-zinc-400 hover:text-[#D4F700] rounded-lg transition py-1 px-2 hover:bg-zinc-900 text-xs font-semibold">
@@ -140,13 +170,21 @@ export default function HistoryPage() {
       </aside>
 
       {/* CENTER AREA (Campaign Detail & Associated Leads) */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden">
+      <main className="flex-1 flex flex-col h-full overflow-hidden w-full relative">
         {/* Top Header */}
-        <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-8 shrink-0">
-          <div className="flex items-center gap-2 text-slate-500 text-xs font-medium">
-            <span>Campaigns</span>
-            <ChevronRight size={12} />
-            <span className="text-slate-800 font-semibold">Details</span>
+        <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-4 lg:px-8 shrink-0">
+          <div className="flex items-center gap-3">
+            <button 
+              className="lg:hidden p-2 -ml-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+              onClick={() => setIsSidebarOpen(true)}
+            >
+              <Menu size={20} />
+            </button>
+            <div className="flex items-center gap-2 text-slate-500 text-xs font-medium">
+              <span>Campaigns</span>
+              <ChevronRight size={12} />
+              <span className="text-slate-800 font-semibold">Details</span>
+            </div>
           </div>
         </header>
 
@@ -157,12 +195,23 @@ export default function HistoryPage() {
               
               {/* Campaign Header Info */}
               <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm space-y-4">
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">OUTREACH CAMPAIGN TARGET</span>
-                  <h2 className="text-xl font-bold text-slate-900 mt-1">{activeCampaign.targetAudience}</h2>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Created on {new Date(activeCampaign.createdAt).toLocaleString()}
-                  </p>
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">OUTREACH CAMPAIGN TARGET</span>
+                    <h2 className="text-xl font-bold text-slate-900 mt-1">{activeCampaign.targetAudience}</h2>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Created on {new Date(activeCampaign.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      sessionStorage.setItem('restoreCampaign', JSON.stringify(activeCampaign));
+                      router.push('/');
+                    }}
+                    className="flex items-center justify-center gap-2 bg-black text-white px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-zinc-800 transition shadow-sm shrink-0"
+                  >
+                    Open in Workspace <ExternalLink size={14} />
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
@@ -215,6 +264,14 @@ export default function HistoryPage() {
                             </span>
                           </div>
                         </div>
+
+                        {lead.summary && (
+                          <div className="pt-2 border-t border-slate-200/60">
+                            <p className="text-[11px] text-slate-500 leading-relaxed italic line-clamp-4">
+                              {lead.summary}
+                            </p>
+                          </div>
+                        )}
 
                         {lead.profileUrl && (
                           <a 

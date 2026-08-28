@@ -22,6 +22,8 @@ interface RootLayoutProps {
   children: React.ReactNode;
 }
 
+import SessionProviderWrapper from "@/components/SessionProviderWrapper";
+
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html
@@ -29,9 +31,11 @@ export default function RootLayout({ children }: RootLayoutProps) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
-        <Suspense fallback={<div className="p-8 text-center">Loading...</div>}>
-          {children}
-        </Suspense>
+        <SessionProviderWrapper>
+          <Suspense fallback={<div className="p-8 text-center">Loading...</div>}>
+            {children}
+          </Suspense>
+        </SessionProviderWrapper>
       </body>
     </html>
   );

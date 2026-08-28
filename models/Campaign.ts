@@ -4,6 +4,7 @@ export interface ICampaign extends Document {
   targetAudience: string;
   reasonForOutreach: string;
   offering: string;
+  userId: string;
   createdAt: Date;
 }
 
@@ -12,6 +13,7 @@ const CampaignSchema = new Schema<ICampaign>(
     targetAudience: { type: String, required: true },
     reasonForOutreach: { type: String, required: true },
     offering: { type: String, required: true },
+    userId: { type: String, required: true },
   },
   { timestamps: true }
 );
