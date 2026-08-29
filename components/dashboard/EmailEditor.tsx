@@ -1,6 +1,10 @@
-import React from 'react';
-import { RefreshCw, Send } from 'lucide-react';
+import React, { useState } from 'react';
+import { RefreshCw, Send, Copy } from 'lucide-react';
 import { LeadData } from '@/types';
+import { Input, Textarea } from '@/components/ui/Input';
+import { Button } from '@/components/ui/Button';
+import { SkeletonEmail } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 
 interface EmailEditorProps {
   activeLead: LeadData;
@@ -10,45 +14,89 @@ interface EmailEditorProps {
 }
 
 export default function EmailEditor({ activeLead, selectedLeadIndex, setLeads, regenerateEmail }: EmailEditorProps) {
+  const { success, error } = useToast();
+  const [sending, setSending] = useState(false);
+
+  const handleCopyDraft = () => {
+    navigator.clipboard.writeText(activeLead.draftEmail);
+    success('Draft copied to clipboard!');
+  };
+
+  const handleSend = async () => {
+    if (!activeLead._id) {
+      error('Cannot send: Lead must be saved first');
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: activeLead.email,
+          subject: activeLead.subject,
+          html: activeLead.draftEmail,
+          leadId: activeLead._id
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        success('Email sent successfully!');
+        const idx = selectedLeadIndex;
+        if (idx !== null) {
+          setLeads(prev => {
+            const updated = [...prev];
+            updated[idx] = { ...updated[idx], status: 'sent' };
+            return updated;
+          });
+        }
+      } else {
+        error(data.error || 'Failed to send email');
+      }
+    } catch (e: any) {
+      error('Failed to send email');
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-      <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 space-y-3">
+    <div className="card overflow-hidden flex flex-col" style={{ minHeight: 'calc(100vh - 380px)' }}>
+      <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 space-y-3 shrink-0">
         <div className="flex items-center gap-4">
-          <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider w-16 text-right">To</label>
-          <div className="flex items-center">
-            <span className="text-xs font-mono bg-white border border-slate-200 px-2.5 py-1 rounded-md text-slate-700 font-semibold">{activeLead.email}</span>
+          <label className="label w-16 text-right mb-0">To</label>
+          <div className="flex items-center flex-1">
+            <span className="text-xs font-mono bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-slate-700 font-medium truncate">
+              {activeLead.email}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider w-16 text-right">Subject</label>
-          <input 
-            type="text" 
-            value={activeLead.subject || ''} 
-            onChange={(e) => {
-              const idx = selectedLeadIndex;
-              if (idx === null) return;
-              setLeads(prev => {
-                const updated = [...prev];
-                updated[idx] = { ...updated[idx], subject: e.target.value };
-                return updated;
-              });
-            }}
-            placeholder="Email Subject"
-            className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#D4F700]/50 focus:border-[#D4F700] transition-shadow"
-          />
+          <label className="label w-16 text-right mb-0">Subject</label>
+          <div className="flex-1">
+            <Input 
+              type="text" 
+              value={activeLead.subject || ''} 
+              onChange={(e) => {
+                const idx = selectedLeadIndex;
+                if (idx === null) return;
+                setLeads(prev => {
+                  const updated = [...prev];
+                  updated[idx] = { ...updated[idx], subject: e.target.value };
+                  return updated;
+                });
+              }}
+              placeholder="Email Subject"
+            />
+          </div>
         </div>
       </div>
 
-      <div className="p-6 relative">
-        {activeLead.regenerating && (
-          <div className="absolute inset-0 bg-white/80 z-10 flex flex-col items-center justify-center space-y-2">
-            <RefreshCw className="animate-spin text-black" size={32} />
-            <span className="text-xs font-semibold text-slate-500">Drafting personalized email...</span>
-          </div>
-        )}
+      <div className="p-6 relative flex-1 flex flex-col">
+        {activeLead.regenerating && <SkeletonEmail />}
 
-        <textarea
-          className="w-full h-80 bg-slate-50/50 p-4 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#D4F700]/40 focus:border-[#D4F700] font-mono leading-relaxed transition-shadow"
+        <Textarea
+          className="flex-1 min-h-[200px] resize-none font-mono leading-relaxed bg-slate-50/30"
           value={activeLead.draftEmail}
           onChange={(e) => {
             const idx = selectedLeadIndex;
@@ -63,33 +111,41 @@ export default function EmailEditor({ activeLead, selectedLeadIndex, setLeads, r
         />
       </div>
 
-      <div className="p-4 bg-slate-50/85 border-t border-slate-100 flex justify-between items-center">
-        <button 
+      <div className="px-4 py-3 bg-slate-50/80 border-t border-slate-200 flex justify-between items-center gap-3 shrink-0">
+        <Button 
+          variant="secondary"
+          size="sm"
           onClick={() => {
             if (selectedLeadIndex !== null) regenerateEmail(selectedLeadIndex);
           }}
           disabled={activeLead.status === 'sent'}
-          className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 rounded-xl border border-slate-200 transition disabled:opacity-50"
+          loading={activeLead.regenerating}
+          icon={<RefreshCw size={14} />}
+          aria-label="Regenerate email draft"
         >
-          <RefreshCw size={14} className={activeLead.regenerating ? 'animate-spin' : ''} /> Regenerate
-        </button>
+          Regenerate
+        </Button>
 
         <div className="flex gap-2">
-          <button 
-            onClick={() => {
-              navigator.clipboard.writeText(activeLead.draftEmail);
-              console.log('Copied to clipboard!');
-            }}
-            className="px-4 py-2 text-xs font-semibold text-slate-600 bg-white hover:bg-slate-100 rounded-xl border border-slate-200 transition"
+          <Button 
+            variant="secondary"
+            size="sm"
+            onClick={handleCopyDraft}
+            icon={<Copy size={14} />}
+            aria-label="Copy email draft"
           >
             Copy Draft
-          </button>
-          <button 
-            disabled={true}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold bg-slate-200 text-slate-400 rounded-xl transition cursor-not-allowed border border-slate-200"
+          </Button>
+          <Button 
+            variant="primary"
+            size="sm"
+            icon={<Send size={14} />}
+            loading={sending}
+            onClick={handleSend}
+            disabled={activeLead.status === 'sent'}
           >
-            <Send size={14} /> Send (Available Soon)
-          </button>
+            Send
+          </Button>
         </div>
       </div>
     </div>

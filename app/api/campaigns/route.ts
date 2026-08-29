@@ -4,6 +4,7 @@ import { Campaign } from '@/models/Campaign';
 import { Lead } from '@/models/Lead';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { redis } from '@/lib/redis';
 
 export async function POST(req: Request) {
   try {
@@ -14,7 +15,7 @@ export async function POST(req: Request) {
 
     await connectToDatabase();
     
-    const { targetAudience, reasonForOutreach, offering, leads } = await req.json();
+    const { targetAudience, reasonForOutreach, offering, leads, followUpEnabled, followUpDelayDays, maxFollowUps } = await req.json();
 
     if (!targetAudience || !reasonForOutreach || !offering) {
       return NextResponse.json({ error: 'Missing required campaign fields' }, { status: 400 });
@@ -26,23 +27,41 @@ export async function POST(req: Request) {
       reasonForOutreach,
       offering,
       userId: (session.user as any).id,
+      followUpEnabled: followUpEnabled || false,
+      followUpDelayDays: followUpDelayDays || 3,
+      maxFollowUps: maxFollowUps || 2,
     });
 
     // 2. Create Leads associated with the Campaign
+    const userId = (session.user as any).id;
     if (leads && Array.isArray(leads) && leads.length > 0) {
-      const leadsToInsert = leads.map(lead => ({
-        campaignId: newCampaign._id,
-        name: lead.name,
-        email: lead.email,
-        profileUrl: lead.profileUrl,
-        source: lead.source,
-        summary: lead.summary,
-        draftEmail: lead.draftEmail,
-        status: 'draft',
-      }));
+      // Find existing emails for this user to avoid cross-campaign duplicates
+      const incomingEmails = leads.map(l => l.email);
+      const existingLeads = await Lead.find({ userId, email: { $in: incomingEmails } }).select('email').lean();
+      const existingEmailSet = new Set(existingLeads.map(l => l.email));
 
-      await Lead.insertMany(leadsToInsert);
+      const leadsToInsert = leads
+        .filter(lead => !existingEmailSet.has(lead.email))
+        .map(lead => ({
+          campaignId: newCampaign._id,
+          userId,
+          name: lead.name,
+          email: lead.email,
+          confidence: lead.confidence || 'verified',
+          profileUrl: lead.profileUrl,
+          source: lead.source,
+          summary: lead.summary,
+          subject: lead.subject || '',
+          draftEmail: lead.draftEmail || '',
+          status: 'draft',
+        }));
+
+      if (leadsToInsert.length > 0) {
+        await Lead.insertMany(leadsToInsert);
+      }
     }
+
+    await redis.del(`history:${userId}`);
 
     return NextResponse.json({ success: true, campaignId: newCampaign._id });
   } catch (error: any) {

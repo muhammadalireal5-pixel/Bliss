@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import clientPromise from '@/lib/mongodb';
-import bcrypt from 'bcrypt';
+import { connectToDatabase } from '@/lib/mongodb';
+import bcrypt from 'bcryptjs';
 
 export async function POST(req: Request) {
   try {
@@ -14,11 +14,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 });
     }
 
-    const client = await clientPromise;
+    console.log('Signup: connecting to mongodb');
+    const client = await connectToDatabase();
+    console.log('Signup: connected to mongodb');
     const db = client.db();
     
     // Check if user already exists
+    console.log('Signup: checking for existing user');
     const existingUser = await db.collection('users').findOne({ email });
+    console.log('Signup: finished checking for existing user');
     if (existingUser) {
       return NextResponse.json({ error: 'User with this email already exists' }, { status: 400 });
     }

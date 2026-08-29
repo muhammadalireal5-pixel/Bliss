@@ -4,12 +4,27 @@ import { Campaign } from '@/models/Campaign';
 import { Lead } from '@/models/Lead';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { redis } from '@/lib/redis';
 
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     if (!session || !session.user || !(session.user as any).id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    const userId = (session.user as any).id;
+
+    const rateLimit = await checkRateLimit(`history:${userId}`, { limit: 30, windowSeconds: 60 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
+    const cacheKey = `history:${userId}`;
+    const cachedHistory = await redis.get(cacheKey);
+    if (cachedHistory) {
+      return NextResponse.json({ history: cachedHistory });
     }
 
     await connectToDatabase();
@@ -26,6 +41,8 @@ export async function GET() {
       ...campaign,
       leads: allLeads.filter(l => l.campaignId.toString() === campaign._id.toString()),
     }));
+
+    await redis.set(cacheKey, history, { ex: 300 });
 
     return NextResponse.json({ history });
   } catch (error: any) {

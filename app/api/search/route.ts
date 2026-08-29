@@ -1,169 +1,189 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type } from '@google/genai';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { redis } from '@/lib/redis';
+import crypto from 'crypto';
+import { fetchPageContent } from '@/lib/page-fetcher';
+import { findValidEmail } from '@/lib/email-validator';
+import connectToDatabase from '@/lib/db';
+import { Lead } from '@/models/Lead';
 
-function buildQuery(targetAudience: string) {
-  const platforms = [
-    { keywords: ['engineer', 'developer', 'programmer', 'software'], platform: 'site:github.com' },
-    { keywords: ['writer', 'blogger', 'journalist', 'content'], platform: 'site:medium.com' },
-    { keywords: ['designer', 'ux', 'ui', 'illustrator'], platform: 'site:dribbble.com' },
-  ];
-
-  const lowerAudience = targetAudience.toLowerCase();
-  const activePlatforms = ['site:linkedin.com/in/', 'site:twitter.com/'];
+function buildQueries(targetAudience: string, offering: string): string[] {
+  const audience = targetAudience.replace(/"/g, '');
+  const emails = '("@gmail.com" OR "@yahoo.com" OR "@hotmail.com" OR "@outlook.com")';
   
-  for (const { keywords, platform } of platforms) {
-    if (keywords.some(kw => lowerAudience.includes(kw))) {
-      activePlatforms.push(platform);
-    }
-  }
-
-  const platformsString = activePlatforms.join(' OR ');
-  return `(${platformsString}) ${targetAudience} ("@gmail.com" OR "@yahoo.com" OR "@hotmail.com" OR "@outlook.com")`;
+  return [
+    `site:linkedin.com/in/ "${audience}" ${emails}`,
+    `site:twitter.com/ "${audience}" ${emails}`,
+    `site:github.com "${audience}" ${emails}`,
+    `site:producthunt.com "${audience}" ${emails}`,
+    `"${audience}" contact email`,
+  ];
 }
 
 export async function POST(req: Request) {
   try {
-    const { targetAudience } = await req.json();
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user || !(session.user as any).id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const userId = (session.user as any).id;
+
+    const rateLimit = await checkRateLimit(`search:${userId}`, { limit: 30, windowSeconds: 60 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
+    const { targetAudience, offering = '' } = await req.json();
     const SERPER_API_KEY = process.env.SERPER_API_KEY;
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
     if (!targetAudience) {
       return NextResponse.json({ error: 'Target audience is required' }, { status: 400 });
     }
 
-    if (!SERPER_API_KEY) {
-      return NextResponse.json({ error: 'Search API key is not configured' }, { status: 500 });
+    if (!SERPER_API_KEY || !GEMINI_API_KEY) {
+      return NextResponse.json({ error: 'API keys are not configured' }, { status: 500 });
     }
 
-    const query = buildQuery(targetAudience);
-
-    const response = await fetch('https://google.serper.dev/search', {
-      method: 'POST',
-      headers: {
-        'X-API-KEY': SERPER_API_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        q: query
-      }),
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Serper API error: ${response.statusText}. Details: ${errorBody}`);
+    const cacheKey = `search:${crypto.createHash('sha256').update(targetAudience + offering).digest('hex')}`;
+    const cachedLeads = await redis.get(cacheKey);
+    if (cachedLeads) {
+      return NextResponse.json({ leads: cachedLeads });
     }
 
-    const data = await response.json();
-    let leads: { name: string; email: string; profileUrl: string; source: string; summary?: string }[] = [];
+    const queries = buildQueries(targetAudience, offering);
+    let allOrganicResults: any[] = [];
+    const seenUrls = new Set<string>();
 
-    if (Array.isArray(data.organic) && data.organic.length > 0) {
-      try {
-        const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-        if (!GEMINI_API_KEY) {
-          throw new Error('GEMINI_API_KEY is not configured');
-        }
-
-        const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-        const batch = data.organic.map((r: any) => ({
-          title: r.title,
-          snippet: r.snippet,
-          link: r.link
-        }));
-
-        const prompt = `Extract name, email, platform, profileUrl, and a brief 1-2 sentence summary/bio of the person from these search results. Return null for name or email if not confidently found. Do not hallucinate.
-${JSON.stringify(batch)}`;
-
-        const geminiResponse = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents: prompt,
-          config: {
-            temperature: 0,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING, nullable: true },
-                  email: { type: Type.STRING, nullable: true },
-                  platform: { 
-                    type: Type.STRING, 
-                    enum: ["linkedin", "twitter", "github", "medium", "dribbble", "other"] 
-                  },
-                  profileUrl: { type: Type.STRING },
-                  summary: { type: Type.STRING, nullable: true, description: "A brief 1-2 sentence bio or summary of who this person is based on the snippet." },
-                },
-                required: ["name", "email", "platform", "profileUrl"]
+    await Promise.all(
+      queries.map(async (query) => {
+        try {
+          const response = await fetch('https://google.serper.dev/search', {
+            method: 'POST',
+            headers: {
+              'X-API-KEY': SERPER_API_KEY,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ q: query }),
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (Array.isArray(data.organic)) {
+              for (const result of data.organic) {
+                if (result.link && !seenUrls.has(result.link)) {
+                  seenUrls.add(result.link);
+                  allOrganicResults.push(result);
+                }
               }
             }
           }
-        });
-
-        const content = geminiResponse.text;
-        if (!content) {
-          throw new Error('No valid content returned from Gemini.');
+        } catch (e) {
+          console.error(`Serper query failed: ${query}`, e);
         }
+      })
+    );
 
-        const parsed = JSON.parse(content);
-        
-        const seenEmails = new Set();
-        for (const l of parsed) {
-          if (l.email) {
-            const emailLower = l.email.toLowerCase();
-            if (!seenEmails.has(emailLower)) {
-              seenEmails.add(emailLower);
-              
-              let sourceName = 'Other';
-              if (l.platform === 'linkedin') sourceName = 'LinkedIn';
-              else if (l.platform !== 'other') sourceName = l.platform.charAt(0).toUpperCase() + l.platform.slice(1);
-              
-              leads.push({
-                name: l.name || 'Unknown',
-                email: emailLower,
-                profileUrl: l.profileUrl,
-                source: sourceName,
-                summary: l.summary || undefined
-              });
+    if (allOrganicResults.length === 0) {
+      return NextResponse.json({ leads: [] });
+    }
+
+    // Limit to top 20 to avoid slow page fetches
+    allOrganicResults = allOrganicResults.slice(0, 20);
+
+    const enrichedResults = await Promise.all(
+      allOrganicResults.map(async (r) => {
+        const pageContent = await fetchPageContent(r.link, 2000);
+        return {
+          title: r.title,
+          snippet: r.snippet,
+          link: r.link,
+          pageContent: pageContent ? pageContent.slice(0, 1000) : undefined // limit to 1000 chars of page content to save tokens
+        };
+      })
+    );
+
+    let leads: any[] = [];
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    const prompt = `Extract name, email, company domain, platform, profileUrl, and a brief 1-2 sentence summary/bio of the person from these search results. Return null for name or email if not confidently found. Do not hallucinate.
+${JSON.stringify(enrichedResults)}`;
+
+    try {
+      const geminiResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          temperature: 0,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING, nullable: true },
+                email: { type: Type.STRING, nullable: true },
+                domain: { type: Type.STRING, nullable: true, description: "Company domain if found (e.g., acme.com), omit if generic like gmail.com" },
+                platform: { type: Type.STRING, enum: ["linkedin", "twitter", "github", "producthunt", "medium", "dribbble", "other"] },
+                profileUrl: { type: Type.STRING },
+                summary: { type: Type.STRING, nullable: true },
+              },
+              required: ["name", "platform", "profileUrl"]
             }
           }
         }
-      } catch (error) {
-        console.error('Gemini extraction failed, falling back to regex:', error);
-        
-        const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-        
-        data.organic.forEach((result: any) => {
-          const url = result.link || '';
-          const snippet = result.snippet || '';
-          const title = result.title || '';
+      });
+
+      const parsed = JSON.parse(geminiResponse.text || "[]");
+      const seenEmails = new Set();
+      
+      for (const l of parsed) {
+        let finalEmail = l.email ? l.email.toLowerCase() : null;
+        let confidence: 'verified' | 'guessed' = 'verified';
+
+        if (!finalEmail && l.name && l.domain && l.domain.includes('.')) {
+          const guess = await findValidEmail(l.name, l.domain);
+          if (guess) {
+            finalEmail = guess.email;
+            confidence = 'guessed';
+          }
+        }
+
+        if (finalEmail && !seenEmails.has(finalEmail)) {
+          seenEmails.add(finalEmail);
           
-          const emailMatch = snippet.match(emailRegex);
-          if (emailMatch && emailMatch.length > 0) {
-            const email = emailMatch[0].toLowerCase();
-            
-            let name = title.split('-')[0].trim();
-            if (name.includes('|')) name = name.split('|')[0].trim();
-            if (name.includes('...')) name = name.split('...')[0].trim();
-            if (!name || name.length > 40) name = 'Unknown';
-            
-            let source = 'Other';
-            if (url.includes('linkedin.com')) source = 'LinkedIn';
-            else if (url.includes('twitter.com')) source = 'Twitter';
-            else if (url.includes('github.com')) source = 'Github';
-            else if (url.includes('medium.com')) source = 'Medium';
-            else if (url.includes('dribbble.com')) source = 'Dribbble';
-
-            if (!leads.some((l) => l.email === email)) {
-              leads.push({
-                name,
-                email,
-                profileUrl: url,
-                source,
-                summary: snippet.length > 150 ? snippet.slice(0, 150) + '...' : snippet
-              });
-            }
-          }
-        });
+          let sourceName = l.platform.charAt(0).toUpperCase() + l.platform.slice(1);
+          if (sourceName === 'Other' && l.profileUrl.includes('linkedin.com')) sourceName = 'LinkedIn';
+          
+          leads.push({
+            name: l.name || 'Unknown',
+            email: finalEmail,
+            confidence,
+            profileUrl: l.profileUrl,
+            source: sourceName,
+            summary: l.summary || undefined
+          });
+        }
       }
+    } catch (error) {
+      console.error('Gemini extraction failed:', error);
+      // Fallback
+    }
+
+    // Cross-campaign dedup
+    if (leads.length > 0) {
+      await connectToDatabase();
+      const extractedEmails = leads.map(l => l.email);
+      const existingLeads = await Lead.find({ userId, email: { $in: extractedEmails } }).select('email').lean();
+      const existingEmailSet = new Set(existingLeads.map(l => l.email));
+
+      leads = leads.map(l => ({
+        ...l,
+        alreadyContacted: existingEmailSet.has(l.email)
+      }));
+
+      await redis.set(cacheKey, JSON.stringify(leads), { ex: 21600 });
     }
 
     return NextResponse.json({ leads });

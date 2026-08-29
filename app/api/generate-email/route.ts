@@ -1,8 +1,22 @@
 import { NextResponse } from 'next/server';
 import { generateEmailTemplate, regenerateLeadEmail, populateEmailTemplate, generateBatchEmails } from '@/lib/gemini';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
 
 export async function POST(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user || !(session.user as any).id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const userId = (session.user as any).id;
+
+    const rateLimit = await checkRateLimit(`generate:${userId}`, { limit: 30, windowSeconds: 60 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     const body = await req.json();
     const { action } = body;
 

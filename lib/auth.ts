@@ -1,7 +1,7 @@
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import clientPromise from "./mongodb";
-import bcrypt from "bcrypt";
+import { connectToDatabase } from "./mongodb";
+import bcrypt from "bcryptjs";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -12,20 +12,28 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" }
       },
       async authorize(credentials) {
+        console.log('[AUTHORIZE] Entered authorize()');
         if (!credentials?.email || !credentials?.password) {
-          throw new Error('Please enter an email and password');
+          throw new Error("Invalid credentials");
         }
 
-        const client = await clientPromise;
+        console.log('[AUTHORIZE] Connecting to MongoDB...');
+        const client = await connectToDatabase();
+        console.log('[AUTHORIZE] Connected to MongoDB. Querying user...');
         const usersCollection = client.db().collection('users');
 
-        const user = await usersCollection.findOne({ email: credentials.email });
+        const query = { email: credentials.email };
+        console.log(`[AUTHORIZE] Running query against 'users' collection:`, JSON.stringify(query));
+        const user = await usersCollection.findOne(query);
+        console.log('[AUTHORIZE] Query resolved. User found:', !!user);
 
         if (!user || !user.password) {
           throw new Error('No user found with this email');
         }
 
-        const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
+        console.log('[AUTHORIZE] Comparing password with bcrypt...');
+        const isPasswordValid = bcrypt.compareSync(credentials.password, user.password);
+        console.log('[AUTHORIZE] bcrypt.compareSync() resolved. isValid:', isPasswordValid);
 
         if (!isPasswordValid) {
           throw new Error('Invalid password');

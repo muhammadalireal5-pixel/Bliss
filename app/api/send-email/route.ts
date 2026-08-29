@@ -1,37 +1,46 @@
 import { NextResponse } from 'next/server';
-import { Resend } from 'resend';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { redis } from '@/lib/redis';
+import crypto from 'crypto';
+import { sendEmail } from '@/lib/mailSenders';
 
 export async function POST(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user || !(session.user as any).id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const userId = (session.user as any).id;
+
+    const rateLimit = await checkRateLimit(`send:${userId}`, { limit: 10, windowSeconds: 60 });
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
     const { to, subject, html } = await req.json();
 
     if (!to || !subject || !html) {
       return NextResponse.json({ error: 'Missing required fields (to, subject, html)' }, { status: 400 });
     }
 
-    const RESEND_API_KEY = process.env.RESEND_API_KEY;
-
-    if (!RESEND_API_KEY) {
-      return NextResponse.json({ error: 'Resend API key is not configured' }, { status: 500 });
+    const dedupKey = `sent:${crypto.createHash('sha256').update(to + subject + html).digest('hex')}`;
+    const isDuplicate = await redis.get(dedupKey);
+    if (isDuplicate) {
+      return NextResponse.json({ success: true, data: { message: "Duplicate suppressed" }, duplicate: true });
     }
 
-    // Initialize inside handler to ensure env vars are available at runtime
-    const resend = new Resend(RESEND_API_KEY);
+    const htmlFormatted = html.replace(/\n/g, '<br>');
+    const result = await sendEmail(userId, to, subject, htmlFormatted);
 
-    // Usually you need a verified domain in Resend to send from. 
-    // For testing, Resend allows sending to the verified email address from onboarding@resend.dev
-    const { data, error } = await resend.emails.send({
-      from: 'SayMe Outreach <onboarding@resend.dev>', // Change to your verified domain in production
-      to: [to],
-      subject: subject,
-      html: html.replace(/\n/g, '<br>'), // Convert newlines to HTML breaks
-    });
-
-    if (error) {
-      return NextResponse.json({ error }, { status: 400 });
+    if (!result.success) {
+      return NextResponse.json({ error: result.error || 'Failed to send' }, { status: 400 });
     }
 
-    return NextResponse.json({ success: true, data });
+    await redis.set(dedupKey, 1, { nx: true, ex: 300 });
+
+    return NextResponse.json({ success: true, data: result });
   } catch (error: any) {
     console.error('Send Email Error:', error);
     return NextResponse.json({ error: error.message || 'Failed to send email' }, { status: 500 });

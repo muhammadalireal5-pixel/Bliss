@@ -8,6 +8,9 @@ const CampaignSchema = new Schema<ICampaign>(
     reasonForOutreach: { type: String, required: true },
     offering: { type: String, required: true },
     userId: { type: String, required: true },
+    followUpEnabled: { type: Boolean, default: false },
+    followUpDelayDays: { type: Number, default: 3 },
+    maxFollowUps: { type: Number, default: 2 },
   },
   { timestamps: true }
 );

@@ -3,20 +3,13 @@
 import { useState, useEffect } from 'react';
 import { 
   Search, 
-  Send, 
   RefreshCw, 
-  Plus, 
-  History, 
-  FileText, 
-  LayoutDashboard, 
-  X, 
-  ChevronRight, 
-  TrendingUp, 
   PlusCircle, 
   Layers, 
-  ArrowUpRight,
   AlertCircle,
-  Menu
+  Menu,
+  FileText,
+  ChevronRight
 } from 'lucide-react';
 import Link from 'next/link';
 import { LeadData } from '@/types';
@@ -24,14 +17,22 @@ import LeadProfileCard from '@/components/dashboard/LeadProfileCard';
 import EmailEditor from '@/components/dashboard/EmailEditor';
 import LeftSidebar from '@/components/dashboard/LeftSidebar';
 import RightSidebar from '@/components/dashboard/RightSidebar';
-import { getInitials } from '@/lib/utils';
 
-import { useSession, signOut } from 'next-auth/react';
+import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+
+import { useToast } from '@/components/ui/Toast';
+import { Modal } from '@/components/ui/Modal';
+import CsvImportModal from '@/components/dashboard/CsvImportModal';
+import { Input, Textarea } from '@/components/ui/Input';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { MobileTabBar, TabId } from '@/components/ui/MobileTabBar';
 
 export default function Home() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { success, error, warning } = useToast();
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -65,6 +66,16 @@ export default function Home() {
   const [targetAudience, setTargetAudience] = useState('');
   const [reasonForOutreach, setReasonForOutreach] = useState('');
   const [offering, setOffering] = useState('');
+  const [oauthAccount, setOauthAccount] = useState<any>(null);
+
+  useEffect(() => {
+    fetch('/api/oauth/status')
+      .then(res => res.json())
+      .then(data => {
+        if (data.account) setOauthAccount(data.account);
+      })
+      .catch(() => {});
+  }, []);
   
   // App state
   const [loading, setLoading] = useState(false);
@@ -77,19 +88,26 @@ export default function Home() {
   const [manualLeadName, setManualLeadName] = useState('');
   const [manualLeadEmail, setManualLeadEmail] = useState('');
   const [manualLeadSource, setManualLeadSource] = useState('Manual');
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [manualGenerating, setManualGenerating] = useState(false);
+
+  // Follow-up configs
+  const [followUpEnabled, setFollowUpEnabled] = useState(false);
+  const [followUpDelayDays, setFollowUpDelayDays] = useState(3);
+  const [maxFollowUps, setMaxFollowUps] = useState(2);
 
   // Responsive UI state
   const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
   const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(false);
+  const [activeMobileTab, setActiveMobileTab] = useState<TabId>('leads');
   
   const [loadingMessage, setLoadingMessage] = useState('Initializing search...');
 
   if (status === 'loading' || status === 'unauthenticated') {
     return (
-      <div className="flex h-screen items-center justify-center bg-[#F5F6FA]">
-        <RefreshCw className="animate-spin text-[#D4F700]" size={32} />
+      <div className="flex h-screen items-center justify-center bg-background">
+        <RefreshCw className="animate-spin text-primary" size={32} />
       </div>
     );
   }
@@ -97,7 +115,6 @@ export default function Home() {
   // Statistics
   const totalLeads = leads.length;
   const securedLeads = leads.filter(l => l.secured).length;
-  const draftLeads = leads.filter(l => l.status === 'draft').length;
 
   const handleSearchAndGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,6 +134,7 @@ export default function Home() {
       msgIndex = (msgIndex + 1) % messages.length;
       setLoadingMessage(messages[msgIndex]);
     }, 2500);
+    
     try {
       // 1. Search for leads
       const searchRes = await fetch('/api/search', {
@@ -136,10 +154,12 @@ export default function Home() {
       const foundLeads = searchData.leads || [];
 
       if (foundLeads.length === 0) {
-        console.log('No profiles with public emails found. Try a different audience or search term.');
+        warning('No profiles with public emails found. Try a different audience or search term.');
         setLoading(false);
         return;
       }
+
+      success(`Found ${foundLeads.length} leads. Generating drafts...`);
 
       // 2. Generate emails for all leads in one batch request
       let leadsWithEmails: LeadData[] = [];
@@ -203,10 +223,13 @@ export default function Home() {
       setLeads(leadsWithEmails);
       if (leadsWithEmails.length > 0) {
         setSelectedLeadIndex(0);
+        setActiveMobileTab('compose'); // switch to compose tab on mobile
       }
 
       if (failedCount > 0) {
-        console.log(`${failedCount} of ${leadsWithEmails.length} email drafts failed to generate (AI error). Fallback templates were used — you can manually edit or regenerate them.`);
+        warning(`${failedCount} email drafts used fallback templates due to AI timeout.`);
+      } else {
+        success('All email drafts generated successfully.');
       }
 
       // 3. Save campaign and leads to history
@@ -218,13 +241,14 @@ export default function Home() {
             targetAudience,
             reasonForOutreach,
             offering,
-            leads: leadsWithEmails
+            leads: leadsWithEmails,
+            followUpEnabled,
+            followUpDelayDays,
+            maxFollowUps
           })
         });
         const saveData = await saveRes.json();
-        if (!saveRes.ok || saveData.error) {
-          console.error('Failed to save campaign:', saveData.error);
-        } else if (saveData.campaignId) {
+        if (saveRes.ok && saveData.campaignId) {
           setCampaignId(saveData.campaignId);
         }
       } catch (saveErr) {
@@ -232,8 +256,7 @@ export default function Home() {
       }
 
     } catch (err: any) {
-      console.error(err.message || 'An error occurred during lead generation');
-      return;
+      error(err.message || 'An error occurred during lead generation');
     } finally {
       clearInterval(msgInterval);
       setLoading(false);
@@ -286,17 +309,18 @@ export default function Home() {
         return updated;
       });
       
-      // Reset manual fields
       setManualLeadName('');
       setManualLeadEmail('');
       setIsManualModalOpen(false);
+      setActiveMobileTab('compose');
 
       if (generationFailed) {
-        console.log('AI email generation failed — a fallback template was used. You can edit it manually or regenerate.');
+        warning('AI email generation failed. Fallback template applied.');
+      } else {
+        success('Lead added and drafted successfully.');
       }
     } catch (err) {
-      console.error('Failed to generate email template for manual lead', err);
-      return;
+      error('Failed to generate email template for manual lead');
     } finally {
       setManualGenerating(false);
     }
@@ -305,7 +329,6 @@ export default function Home() {
   const regenerateEmail = async (index: number) => {
     if (index === null || index === undefined) return;
     
-    // Set loading indicator using functional update
     setLeads(prev => {
       const updated = [...prev];
       if (!updated[index]) return prev;
@@ -330,7 +353,7 @@ export default function Home() {
       const genData = await genRes.json();
       
       if (!genRes.ok || genData.error) {
-        console.error(`Failed to regenerate: ${genData.error || 'Unknown error'}`);
+        error(`Failed to regenerate: ${genData.error || 'Unknown error'}`);
         setLeads(prev => {
           const updated = [...prev];
           updated[index] = { ...updated[index], regenerating: false };
@@ -339,7 +362,6 @@ export default function Home() {
         return;
       }
 
-      // Functional update to avoid stale closure
       setLeads(prev => {
         const updated = [...prev];
         updated[index] = { 
@@ -351,133 +373,91 @@ export default function Home() {
         };
         return updated;
       });
+      
+      success('Email regenerated successfully.');
     } catch (err) {
-      console.error('Failed to regenerate email', err);
+      error('Failed to regenerate email');
       setLeads(prev => {
         const updated = [...prev];
         updated[index] = { ...updated[index], regenerating: false };
         return updated;
       });
-      return;
     }
   };
 
-  const sendEmail = async (index: number) => {
-    if (index === null || index === undefined) return;
-    
-    const lead = leads[index];
-    if (!lead) return;
-
-    // Set sending state
-    setLeads(prev => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], sending: true };
-      return updated;
-    });
-
-    try {
-      const sendRes = await fetch('/api/send-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: lead.email,
-          subject: lead.subject || `Connecting with ${lead.name}`,
-          html: lead.draftEmail
-        })
-      });
-      const sendData = await sendRes.json();
-      if (sendData.error) throw new Error(typeof sendData.error === 'string' ? sendData.error : sendData.error.message || 'Failed to send');
-      
-      // Functional update to avoid stale closure
-      setLeads(prev => {
-        const updated = [...prev];
-        updated[index] = { ...updated[index], status: 'sent', sending: false };
-        return updated;
-      });
-    } catch (err: any) {
-      console.error('Error sending email:', err.message || err);
-      setLeads(prev => {
-        const updated = [...prev];
-        updated[index] = { ...updated[index], sending: false };
-        return updated;
-      });
-      return;
-    }
-  };
-
-  const sendAllEmails = async () => {
-    const draftIndexes = leads
-      .map((l, i) => l.status === 'draft' ? i : -1)
-      .filter(i => i !== -1);
-
-    if (draftIndexes.length === 0) {
-      console.log('No draft emails left to send!');
-      return;
-    }
-
-    console.log(`Sending emails to ${draftIndexes.length} leads...`);
-    for (const idx of draftIndexes) {
-      await sendEmail(idx);
-    }
-    console.log('Finished sending batch emails.');
-  };
 
   const activeLead = selectedLeadIndex !== null ? leads[selectedLeadIndex] : null;
 
-
   return (
-    <div className="flex h-screen bg-[#F5F6FA] text-slate-800 overflow-hidden font-sans">
+    <div className="flex h-screen bg-background text-foreground overflow-hidden">
       
-      {/* Mobile Overlays */}
-      {isLeftSidebarOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsLeftSidebarOpen(false)} />
-      )}
-      {isRightSidebarOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsRightSidebarOpen(false)} />
-      )}
-
-      {/* LEFT SIDEBAR (Dark Theme - Lead Management) */}
+      {/* LEFT SIDEBAR (Lead Management) */}
       <LeftSidebar
         isLeftSidebarOpen={isLeftSidebarOpen}
         setIsLeftSidebarOpen={setIsLeftSidebarOpen}
         setIsModalOpen={setIsModalOpen}
+        setIsManualModalOpen={setIsManualModalOpen}
+        setIsCsvModalOpen={setIsCsvModalOpen}
         totalLeads={totalLeads}
         securedLeads={securedLeads}
         loading={loading}
         loadingMessage={loadingMessage}
         leads={leads}
         selectedLeadIndex={selectedLeadIndex}
-        setSelectedLeadIndex={setSelectedLeadIndex}
-        setIsManualModalOpen={setIsManualModalOpen}
+        setSelectedLeadIndex={(idx) => {
+          setSelectedLeadIndex(idx);
+          if (window.innerWidth < 768) {
+            setActiveMobileTab('compose');
+            setIsLeftSidebarOpen(false);
+          }
+        }}
         session={session}
+        activeMobileTab={activeMobileTab}
       />
 
       {/* CENTER PANEL (Email Editor Area) */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden w-full relative">
+      <main className={`flex-1 flex-col h-full overflow-hidden w-full relative ${activeMobileTab !== 'compose' ? 'hidden md:flex' : 'flex'}`}>
         {/* Top Header */}
-        <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-4 lg:px-8 shrink-0">
+        <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-4 lg:px-6 shrink-0">
           <div className="flex items-center gap-3">
             <button 
-              className="lg:hidden p-2 -ml-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+              className="md:hidden p-2 -ml-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors"
               onClick={() => setIsLeftSidebarOpen(true)}
+              aria-label="Open navigation menu"
             >
               <Menu size={20} />
             </button>
-            <div className="flex items-center gap-2 text-slate-500 text-xs font-medium">
-              <span>Workspace</span>
-              <ChevronRight size={12} />
-              <span className="text-slate-800 font-semibold">AI Lead Outreach</span>
+            <div className="flex items-center gap-2 text-slate-500 text-xs font-bold">
+              <span className="hidden sm:inline">Workspace</span>
+              <ChevronRight size={12} className="hidden sm:inline" />
+              <span className="text-slate-800">AI Lead Outreach</span>
             </div>
           </div>
           
           <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-3">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span className="text-xs font-semibold text-slate-600">Gemini Flash</span>
+            {oauthAccount ? (
+              <div className="hidden sm:flex items-center gap-2 border-r border-slate-200 pr-3">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                  Sending via {oauthAccount.provider === 'gmail' ? 'Gmail' : 'Outlook'}
+                </span>
+              </div>
+            ) : (
+              <div className="hidden sm:flex items-center gap-2 border-r border-slate-200 pr-3">
+                <span className="w-2 h-2 rounded-full bg-orange-400"></span>
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                  Shared Sender
+                </span>
+              </div>
+            )}
+            <div className="hidden sm:flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Gemini Flash</span>
             </div>
             <button 
-              className="lg:hidden p-2 -mr-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+              className="xl:hidden p-2 -mr-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors"
               onClick={() => setIsRightSidebarOpen(true)}
+              aria-label="Open campaign summary"
             >
               <Layers size={20} />
             </button>
@@ -485,22 +465,20 @@ export default function Home() {
         </header>
 
         {/* Email Editor / Details Area */}
-        <div className="flex-1 overflow-y-auto p-8 space-y-6">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 space-y-6 pb-24 md:pb-8">
           {activeLead && selectedLeadIndex !== null ? (
             <div className="max-w-3xl mx-auto space-y-6">
               
-              {/* Generation Failed Warning */}
               {activeLead.generationFailed && (
-                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-start gap-3">
+                <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 flex items-start gap-3">
                   <AlertCircle className="text-orange-500 shrink-0 mt-0.5" size={18} />
                   <div>
-                    <p className="text-xs font-semibold text-orange-800">AI generation failed for this lead</p>
-                    <p className="text-[11px] text-orange-600 mt-0.5">A fallback template was used. Edit manually or click Regenerate to try again.</p>
+                    <p className="text-xs font-bold text-orange-800">AI generation failed for this lead</p>
+                    <p className="text-[11px] font-medium text-orange-600 mt-1">A fallback template was used. Edit manually or click Regenerate to try again.</p>
                   </div>
                 </div>
               )}
 
-              {/* Recipient Profile Info */}
               <LeadProfileCard 
                 activeLead={activeLead} 
                 selectedLeadIndex={selectedLeadIndex} 
@@ -515,176 +493,205 @@ export default function Home() {
 
             </div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-center space-y-3 py-20 text-slate-400">
-              <div className="w-16 h-16 rounded-full bg-slate-200/50 flex items-center justify-center">
-                <FileText size={32} className="text-slate-400" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-800 text-sm">No Lead Selected</h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-xs">Select a lead from the sidebar list to view, edit, and send outreach emails.</p>
-              </div>
-            </div>
+            <EmptyState 
+              icon={<FileText size={32} />}
+              title="No Lead Selected"
+              description="Select a lead from the sidebar list to view, edit, and send outreach emails."
+            />
           )}
         </div>
       </main>
 
-      {/* RIGHT PANEL (Campaign Summary & Actions) */}
+      {/* RIGHT PANEL (Campaign Summary) */}
       <RightSidebar 
         isRightSidebarOpen={isRightSidebarOpen} 
+        setIsRightSidebarOpen={setIsRightSidebarOpen}
         targetAudience={targetAudience} 
         reasonForOutreach={reasonForOutreach} 
         offering={offering} 
-        totalLeads={totalLeads} 
-        securedLeads={securedLeads} 
+        totalLeads={leads.length} 
+        securedLeads={leads.filter(l => l.secured).length} 
+        leads={leads}
+        campaignId={campaignId}
+        activeMobileTab={activeMobileTab}
       />
 
-      {/* NEW CAMPAIGN MODAL (Overlay) */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden border border-slate-100">
-            <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100">
-              <h3 className="font-bold text-lg text-slate-900">Configure Outreach Campaign</h3>
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg transition"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <form onSubmit={handleSearchAndGenerate} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Who are you looking for?</label>
-                <input
-                  required
-                  className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500/25 focus:border-red-500 outline-none text-sm bg-slate-50/50"
-                  placeholder="e.g., Software Engineers in Tokyo"
-                  value={targetAudience}
-                  onChange={(e) => setTargetAudience(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Why are you reaching out?</label>
-                <textarea
-                  required
-                  rows={3}
-                  className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500/25 focus:border-red-500 outline-none text-sm bg-slate-50/50"
-                  placeholder="e.g., Discuss remote jobs and collaboration opportunities..."
-                  value={reasonForOutreach}
-                  onChange={(e) => setReasonForOutreach(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">What is your offering?</label>
-                <textarea
-                  required
-                  rows={3}
-                  className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500/25 focus:border-red-500 outline-none text-sm bg-slate-50/50"
-                  placeholder="e.g., Remote roles, flexible schedules, up to $120k/year..."
-                  value={offering}
-                  onChange={(e) => setOffering(e.target.value)}
-                />
-              </div>
+      <MobileTabBar activeTab={activeMobileTab} onTabChange={setActiveMobileTab} />
 
-              <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="bg-red-500 hover:bg-red-600 text-white font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-red-500/10 transition disabled:opacity-50"
-                >
-                  {loading ? <RefreshCw className="animate-spin" size={14} /> : <Search size={14} />}
-                  {loading ? 'Searching...' : 'Start Campaign'}
-                </button>
+      {/* NEW CAMPAIGN MODAL */}
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Configure Outreach Campaign" maxWidth="lg">
+        <form onSubmit={handleSearchAndGenerate} className="p-6 space-y-4">
+          <Input
+            label="Who are you looking for?"
+            required
+            placeholder="e.g., Software Engineers in Tokyo"
+            value={targetAudience}
+            onChange={(e) => setTargetAudience(e.target.value)}
+          />
+          <Textarea
+            label="Why are you reaching out?"
+            required
+            rows={3}
+            placeholder="e.g., Discuss remote jobs and collaboration opportunities..."
+            value={reasonForOutreach}
+            onChange={(e) => setReasonForOutreach(e.target.value)}
+          />
+          <Textarea
+            label="What is your offering?"
+            required
+            rows={3}
+            placeholder="e.g., Remote roles, flexible schedules, up to $120k/year..."
+            value={offering}
+            onChange={(e) => setOffering(e.target.value)}
+          />
+
+          <div className="pt-2">
+            <label className="flex items-center gap-2 cursor-pointer mb-3">
+              <input 
+                type="checkbox" 
+                checked={followUpEnabled}
+                onChange={(e) => setFollowUpEnabled(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+              />
+              <span className="text-sm font-semibold text-slate-700">Enable automatic follow-ups</span>
+            </label>
+            
+            {followUpEnabled && (
+              <div className="flex gap-4 p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                <div className="flex-1">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Days between</label>
+                  <input 
+                    type="number" 
+                    min={1} 
+                    max={14} 
+                    className="w-full text-sm bg-white border border-slate-200 rounded-lg p-2"
+                    value={followUpDelayDays}
+                    onChange={(e) => setFollowUpDelayDays(parseInt(e.target.value))}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Max follow-ups</label>
+                  <input 
+                    type="number" 
+                    min={1} 
+                    max={3} 
+                    className="w-full text-sm bg-white border border-slate-200 rounded-lg p-2"
+                    value={maxFollowUps}
+                    onChange={(e) => setMaxFollowUps(parseInt(e.target.value))}
+                  />
+                </div>
               </div>
-            </form>
+            )}
+            <p className="text-xs text-slate-500 mt-2">
+              Note: Requires a connected Microsoft inbox for automatic reply detection. Shared sender users will not get auto-follow-ups.
+            </p>
           </div>
-        </div>
-      )}
+
+          <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setIsModalOpen(false)} type="button">
+              Cancel
+            </Button>
+            <Button type="submit" loading={loading} icon={<Search size={14} />}>
+              Start Campaign
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* ADD MANUAL LEAD MODAL */}
-      {isManualModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden border border-slate-100">
-            <div className="flex justify-between items-center px-6 py-5 border-b border-slate-100">
-              <h3 className="font-bold text-lg text-slate-900">Add Lead Manually</h3>
-              <button 
-                onClick={() => setIsManualModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg transition"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <form onSubmit={addManualLeadSubmit} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Full Name</label>
-                <input
-                  required
-                  className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500/25 focus:border-red-500 outline-none text-sm bg-slate-50/50"
-                  placeholder="e.g., John Doe"
-                  value={manualLeadName}
-                  onChange={(e) => setManualLeadName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Email Address</label>
-                <input
-                  required
-                  type="email"
-                  className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500/25 focus:border-red-500 outline-none text-sm bg-slate-50/50"
-                  placeholder="e.g., john@example.com"
-                  value={manualLeadEmail}
-                  onChange={(e) => setManualLeadEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Source / Platform</label>
-                <select
-                  className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-red-500/25 focus:border-red-500 outline-none text-sm bg-slate-50/50"
-                  value={manualLeadSource}
-                  onChange={(e) => setManualLeadSource(e.target.value)}
-                >
-                  <option value="Manual">Manual</option>
-                  <option value="LinkedIn">LinkedIn</option>
-                  <option value="Reddit">Reddit</option>
-                  <option value="Twitter">Twitter</option>
-                </select>
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsManualModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={manualGenerating}
-                  className="bg-[#D4F700] hover:bg-[#b8d600] text-black font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition disabled:opacity-50"
-                >
-                  {manualGenerating ? (
-                    <>
-                      <RefreshCw className="animate-spin" size={14} /> Generating...
-                    </>
-                  ) : (
-                    <>
-                      <PlusCircle size={14} /> Add & Draft
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+      <Modal isOpen={isManualModalOpen} onClose={() => setIsManualModalOpen(false)} title="Add Lead Manually" maxWidth="md">
+        <form onSubmit={addManualLeadSubmit} className="p-6 space-y-4">
+          <Input
+            label="Full Name"
+            required
+            placeholder="e.g., John Doe"
+            value={manualLeadName}
+            onChange={(e) => setManualLeadName(e.target.value)}
+          />
+          <Input
+            label="Email Address"
+            type="email"
+            required
+            placeholder="e.g., john@example.com"
+            value={manualLeadEmail}
+            onChange={(e) => setManualLeadEmail(e.target.value)}
+          />
+          <div className="w-full">
+            <label className="label">Source / Platform</label>
+            <select
+              className="input-field"
+              value={manualLeadSource}
+              onChange={(e) => setManualLeadSource(e.target.value)}
+            >
+              <option value="Manual">Manual</option>
+              <option value="LinkedIn">LinkedIn</option>
+              <option value="Reddit">Reddit</option>
+              <option value="Twitter">Twitter</option>
+            </select>
           </div>
-        </div>
-      )}
 
+          <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setIsManualModalOpen(false)} type="button">
+              Cancel
+            </Button>
+            <Button type="submit" loading={manualGenerating} icon={<PlusCircle size={14} />}>
+              Add & Draft
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <CsvImportModal
+        isOpen={isCsvModalOpen}
+        onClose={() => setIsCsvModalOpen(false)}
+        onImport={async (importedLeads) => {
+          if (!campaignId) {
+            error("Start a campaign first to import leads.");
+            return;
+          }
+          // Set new leads to state
+          const newLeads = importedLeads.map(l => ({ ...l, status: 'draft', draftEmail: '', regenerating: true }));
+          setLeads(prev => [...newLeads, ...prev]);
+
+          // Start generation for them
+          try {
+            const batchRes = await fetch('/api/generate-email', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                leads: newLeads,
+                reasonForOutreach,
+                offering,
+                campaignId
+              })
+            });
+            const data = await batchRes.json();
+            if (batchRes.ok) {
+              setLeads(prev => {
+                const updated = [...prev];
+                data.results.forEach((resItem: any) => {
+                   const leadIndex = updated.findIndex(l => l.email === resItem.email);
+                   if (leadIndex !== -1) {
+                     updated[leadIndex] = {
+                       ...updated[leadIndex],
+                       draftEmail: resItem.emailDraft,
+                       subject: resItem.subject || `Opportunity for ${updated[leadIndex].name}`,
+                       regenerating: false,
+                       generationFailed: !resItem.success,
+                       _id: resItem._id
+                     };
+                   }
+                });
+                return updated;
+              });
+              success(`Imported and generated emails for ${newLeads.length} leads!`);
+            }
+          } catch(e) {
+            error("Failed to generate emails for imported leads.");
+            setLeads(prev => prev.map(l => newLeads.find(nl => nl.email === l.email) ? {...l, regenerating: false, generationFailed: true} : l));
+          }
+        }}
+      />
     </div>
   );
 }
