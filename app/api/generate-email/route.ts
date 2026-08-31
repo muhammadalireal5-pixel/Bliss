@@ -96,44 +96,50 @@ export async function POST(req: Request) {
             await refundUsage(userId, reservation.reserved - allowedLeads.length);
          }
          
-         const emails = await generateBatchEmails({
-           targetAudience: targetAudience || 'Custom Target',
-           reasonForOutreach: reasonForOutreach || 'Direct Outreach',
-           offering: offering || 'Collaboration Proposal',
-           tone: 'professional',
-           leads: allowedLeads,
-         });
-         
-         // Persist leads to database
-         let savedLeads: any[] = [];
-         if (campaignId) {
-            const { Lead } = await import('@/models/Lead');
-            const connectToDatabase = (await import('@/lib/db')).default;
-            await connectToDatabase();
-            
-            const docsToInsert = allowedLeads.map((l, i) => ({
-              campaignId,
-              userId,
-              name: l.name || 'Unknown',
+         try {
+           const emails = await generateBatchEmails({
+             targetAudience: targetAudience || 'Custom Target',
+             reasonForOutreach: reasonForOutreach || 'Direct Outreach',
+             offering: offering || 'Collaboration Proposal',
+             tone: 'professional',
+             leads: allowedLeads,
+           });
+           
+           // Persist leads to database
+           let savedLeads: any[] = [];
+           if (campaignId) {
+              const { Lead } = await import('@/models/Lead');
+              const connectToDatabase = (await import('@/lib/db')).default;
+              await connectToDatabase();
+              
+              const docsToInsert = allowedLeads.map((l, i) => ({
+                campaignId,
+                userId,
+                name: l.name || 'Unknown',
+                email: l.email,
+                source: l.source || 'CSV Import',
+                subject: emails[i].subject,
+                draftEmail: emails[i].draftEmail,
+                status: 'draft',
+                confidence: 'verified',
+              }));
+              
+              savedLeads = await Lead.insertMany(docsToInsert);
+           }
+           
+           const results = allowedLeads.map((l, i) => ({
               email: l.email,
-              source: l.source || 'CSV Import',
+              emailDraft: emails[i].draftEmail,
               subject: emails[i].subject,
-              draftEmail: emails[i].draftEmail,
-              status: 'draft',
-              confidence: 'verified',
-            }));
-            
-            savedLeads = await Lead.insertMany(docsToInsert);
+              success: true,
+              _id: savedLeads[i]?._id
+           }));
+           return NextResponse.json({ results });
+         } catch (err) {
+           const { refundUsage } = await import('@/lib/usage');
+           await refundUsage(userId, allowedLeads.length);
+           throw err;
          }
-         
-         const results = allowedLeads.map((l, i) => ({
-            email: l.email,
-            emailDraft: emails[i].draftEmail,
-            subject: emails[i].subject,
-            success: true,
-            _id: savedLeads[i]?._id
-         }));
-         return NextResponse.json({ results });
       }
 
       if (name && targetAudience && reasonForOutreach && offering) {

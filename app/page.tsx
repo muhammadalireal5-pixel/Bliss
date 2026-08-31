@@ -484,7 +484,7 @@ export default function Home() {
               <div className="hidden sm:flex items-center gap-2 border-r border-slate-200 pr-3">
                 <span className="w-2 h-2 rounded-full bg-orange-400"></span>
                 <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
-                  Shared Sender
+                  Sending via Resend
                 </span>
               </div>
             )}
@@ -504,7 +504,7 @@ export default function Home() {
             )}
             <div className="hidden sm:flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">SayMe AI Engine</span>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Gemini AI Active</span>
             </div>
             <button 
               className="xl:hidden p-2 -mr-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors"

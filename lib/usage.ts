@@ -8,7 +8,11 @@ export const TIER_LIMITS: Record<string, number> = {
   Pro: 120
 };
 
-export async function checkAndIncrementUsage(userId: string, count: number): Promise<{ allowed: boolean; remaining: number }> {
+export async function checkAndIncrementUsage(userId: string, count: number): Promise<{ allowed: boolean; remaining: number; reserved: number }> {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error('Invalid count');
+  }
+
   await connectToDatabase();
   
   const now = new Date();
@@ -60,11 +64,17 @@ export async function checkAndIncrementUsage(userId: string, count: number): Pro
 }
 
 export async function refundUsage(userId: string, count: number): Promise<void> {
-  if (count <= 0) return;
+  if (!Number.isSafeInteger(count) || count <= 0) return;
   await connectToDatabase();
   await User.updateOne(
     { _id: userId },
-    { $inc: { leadsUsedThisMonth: -count } }
+    [
+      {
+        $set: {
+          leadsUsedThisMonth: { $max: [0, { $subtract: ["$leadsUsedThisMonth", count] }] }
+        }
+      }
+    ]
   );
 }
 

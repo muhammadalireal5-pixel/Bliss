@@ -90,7 +90,7 @@ export default function SettingsPage() {
               
               <div className="bg-blue-900/20 border border-blue-900/50 rounded-lg p-4 flex gap-3 text-sm text-blue-200">
                 <ShieldCheck className="shrink-0 text-blue-400" size={20} />
-                <p>We request only the permissions needed to send emails on your behalf. Your credentials are encrypted at rest using AES-256-GCM.</p>
+                <p>Your inbox stays yours — we only ever send on your behalf, never read your other emails. Credentials are encrypted (AES-256) and never stored in plain text.</p>
               </div>
             </div>
           )}
@@ -98,6 +98,7 @@ export default function SettingsPage() {
           {!account && (
             <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 text-sm text-zinc-400">
               <p><strong>Note:</strong> If you don't connect an account, emails will be sent via our shared Resend infrastructure (SayMe Outreach). You won't be able to receive automatic reply tracking on the shared sender.</p>
+              <p className="mt-2">Want to try connecting your own inbox? Since our app isn't publicly verified with Google/Microsoft yet, email muhammadalireal5@gmail.com and I'll add you as a test user so OAuth connection works for you.</p>
             </div>
           )}
         </div>

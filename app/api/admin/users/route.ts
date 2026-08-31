@@ -50,7 +50,7 @@ export async function PUT(req: Request) {
     }
 
     const { userId, tier } = await req.json();
-    if (!userId || !tier || !TIER_LIMITS[tier]) {
+    if (!userId || typeof tier !== 'string' || !Object.hasOwn(TIER_LIMITS, tier)) {
       return NextResponse.json({ error: 'Invalid data' }, { status: 400 });
     }
 

@@ -48,7 +48,7 @@ export default function AdminDashboard() {
       });
       if (res.ok) {
         const data = await res.json();
-        setUsers(users.map(u => u._id === userId ? { ...u, tier: data.user.tier } : u));
+        setUsers(prevUsers => prevUsers.map(u => u._id === userId ? { ...u, tier: data.user.tier } : u));
       } else {
         alert('Failed to update tier');
       }

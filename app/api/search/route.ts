@@ -26,12 +26,15 @@ function buildQueries(targetAudience: string, offering: string): string[] {
 import { checkAndIncrementUsage, getUserUsage } from '@/lib/usage';
 
 export async function POST(req: Request) {
+  let reservedQuota = 0;
+  let sessionUserId = '';
   try {
     const session = await getServerSession(authOptions);
     if (!session || !session.user || !(session.user as any).id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const userId = (session.user as any).id;
+    sessionUserId = userId;
 
     const rateLimit = await checkRateLimit(`search:${userId}`, { limit: 30, windowSeconds: 60 });
     if (!rateLimit.allowed) {
@@ -68,16 +71,20 @@ export async function POST(req: Request) {
         if (!cacheReservation.allowed) {
            return NextResponse.json({ error: 'Monthly lead generation limit reached. Please upgrade to continue.' }, { status: 403 });
         }
+        reservedQuota = cacheReservation.reserved;
         
-        finalCached = finalCached.slice(0, cacheReservation.reserved);
+        finalCached = finalCached.slice(0, reservedQuota);
         
         // Refund if we reserved more than we needed (shouldn't happen here, but safe)
-        if (finalCached.length < cacheReservation.reserved) {
+        if (finalCached.length < reservedQuota) {
           const { refundUsage } = await import('@/lib/usage');
-          await refundUsage(userId, cacheReservation.reserved - finalCached.length);
+          await refundUsage(userId, reservedQuota - finalCached.length);
+          reservedQuota = finalCached.length;
         }
 
-        return NextResponse.json({ leads: finalCached });
+        const res = NextResponse.json({ leads: finalCached });
+        reservedQuota = 0;
+        return res;
       } catch (e) {
         console.error('Failed to parse cached leads', e);
       }
@@ -144,6 +151,7 @@ ${JSON.stringify(enrichedResults)}`;
     if (!reservation.allowed) {
       return NextResponse.json({ error: 'Monthly lead generation limit reached. Please upgrade to continue.' }, { status: 403 });
     }
+    reservedQuota = reservation.reserved;
 
     try {
       const geminiResponse = await ai.models.generateContent({
@@ -222,17 +230,22 @@ ${JSON.stringify(enrichedResults)}`;
     }
 
     // Limit to the reserved quota
-    const finalLeads = leads.slice(0, reservation.reserved);
+    const finalLeads = leads.slice(0, reservedQuota);
     
     // Refund the difference if we extracted fewer leads than reserved
-    if (finalLeads.length < reservation.reserved) {
+    if (finalLeads.length < reservedQuota) {
       const { refundUsage } = await import('@/lib/usage');
-      await refundUsage(userId, reservation.reserved - finalLeads.length);
+      await refundUsage(userId, reservedQuota - finalLeads.length);
     }
 
+    reservedQuota = 0;
     return NextResponse.json({ leads: finalLeads });
   } catch (error: any) {
     console.error('Search API Error:', error);
+    if (reservedQuota > 0 && sessionUserId) {
+      const { refundUsage } = await import('@/lib/usage');
+      try { await refundUsage(sessionUserId, reservedQuota); } catch (e) { console.error('Refund failed on error', e); }
+    }
     return NextResponse.json({ error: error.message || 'Failed to search for leads' }, { status: 500 });
   }
 }

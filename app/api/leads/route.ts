@@ -23,6 +23,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing lead data' }, { status: 400 });
     }
 
+    // Check if lead email already exists for this user to prevent duplicates
+    const existingLead = await Lead.findOne({ userId, email: lead.email.toLowerCase() });
+    if (existingLead) {
+      return NextResponse.json({ error: 'Lead with this email already exists' }, { status: 400 });
+    }
+
     // If there is no campaignId, we must create a campaign first to attach this lead to
     if (!campaignId) {
       const newCampaign = await Campaign.create({
@@ -33,12 +39,6 @@ export async function POST(req: Request) {
         followUpEnabled: false, // Default for manual one-offs if no campaign exists
       });
       campaignId = newCampaign._id.toString();
-    }
-
-    // Check if lead email already exists for this user to prevent duplicates
-    const existingLead = await Lead.findOne({ userId, email: lead.email.toLowerCase() });
-    if (existingLead) {
-      return NextResponse.json({ error: 'Lead with this email already exists' }, { status: 400 });
     }
 
     const newLead = await Lead.create({
