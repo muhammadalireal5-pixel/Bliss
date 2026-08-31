@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { connectToDatabase } from '@/lib/mongodb';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 
 export async function POST(req: Request) {
   try {
@@ -33,6 +33,10 @@ export async function POST(req: Request) {
       name,
       email,
       password: hashedPassword,
+      tier: 'Free',
+      leadsUsedThisMonth: 0,
+      lastResetDate: new Date(),
+      isAdmin: false,
       createdAt: new Date(),
     });
 

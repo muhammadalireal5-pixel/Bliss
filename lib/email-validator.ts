@@ -1,3 +1,5 @@
+import { resolveMx } from 'node:dns/promises';
+
 export interface MxRecord {
   exchange: string;
   priority: number;
@@ -10,54 +12,15 @@ export async function resolveMxRecords(domain: string): Promise<MxRecord[]> {
     throw new Error("Invalid domain name supplied.");
   }
 
-  const endpoints = [
-    `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(cleanDomain)}&type=MX`,
-    `https://dns.google/resolve?name=${encodeURIComponent(cleanDomain)}&type=MX`,
-  ];
-
-  let lastError: Error | null = null;
-
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetch(endpoint, {
-        method: "GET",
-        headers: {
-          Accept: "application/dns-json",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`DoH server responded with HTTP ${response.status}`);
-      }
-
-      const json = await response.json();
-
-      if (json.Status === 0 && Array.isArray(json.Answer)) {
-        const mxRecords: MxRecord[] = json.Answer
-          .filter((record: any) => record.type === 15)
-          .map((record: any) => {
-            const parts = record.data.trim().split(/\s+/);
-            const priority = parseInt(parts[0], 10);
-            const exchange = (parts[1] || "").replace(/\.$/, "").toLowerCase();
-            return { exchange, priority };
-          })
-          .filter((rec: any) => !isNaN(rec.priority) && rec.exchange.length > 0)
-          .sort((a: any, b: any) => a.priority - b.priority);
-
-        return mxRecords;
-      }
-
-      if (json.Status === 3) {
-        return [];
-      }
+  try {
+    const records = await resolveMx(cleanDomain);
+    return records.sort((a, b) => a.priority - b.priority);
+  } catch (err: any) {
+    if (err.code === 'ENOTFOUND' || err.code === 'ENODATA') {
       return [];
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      continue;
     }
+    throw new Error(`Failed to resolve MX records for ${domain}: ${err.message}`);
   }
-
-  throw new Error(`Failed to resolve MX records for ${domain}: ${lastError?.message}`);
 }
 
 export async function validateEmailMx(email: string): Promise<boolean> {

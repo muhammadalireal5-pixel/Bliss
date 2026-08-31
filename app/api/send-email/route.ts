@@ -35,7 +35,18 @@ export async function POST(req: Request) {
     const result = await sendEmail(userId, to, subject, htmlFormatted);
 
     if (!result.success) {
-      return NextResponse.json({ error: result.error || 'Failed to send' }, { status: 400 });
+      console.error(`Send Email failed [${result.provider}]:`, result.error);
+      
+      let cleanError = 'Failed to send email. Please check your connected inbox configuration or server logs.';
+      if (result.error?.includes('suppressed')) {
+        cleanError = result.error;
+      } else if (result.error?.includes('disabled') || result.error?.includes('API has not been used')) {
+        cleanError = 'Gmail API is disabled. Please enable the Gmail API in your Google Cloud Console for this project.';
+      } else if (result.error?.includes('403') || result.error?.includes('access_denied')) {
+        cleanError = 'Access denied. Please check your Google Cloud Console OAuth consent screen test users or API scopes.';
+      }
+
+      return NextResponse.json({ error: cleanError }, { status: 400 });
     }
 
     await redis.set(dedupKey, 1, { nx: true, ex: 300 });
@@ -43,6 +54,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, data: result });
   } catch (error: any) {
     console.error('Send Email Error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to send email' }, { status: 500 });
+    return NextResponse.json({ error: 'An unexpected error occurred. Please check server logs.' }, { status: 500 });
   }
 }

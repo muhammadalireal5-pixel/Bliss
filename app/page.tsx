@@ -76,13 +76,23 @@ export default function Home() {
       })
       .catch(() => {});
   }, []);
-  
   // App state
   const [loading, setLoading] = useState(false);
   const [leads, setLeads] = useState<LeadData[]>([]);
   const [selectedLeadIndex, setSelectedLeadIndex] = useState<number | null>(null);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  const [usage, setUsage] = useState<{ used: number; limit: number; tier: string; isAdmin: boolean } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/user/usage')
+      .then(res => res.json())
+      .then(data => {
+        if (!data.error) setUsage(data);
+      })
+      .catch(console.error);
+  }, [leads.length]); // Refresh usage when leads change
 
   // Manual lead inputs
   const [manualLeadName, setManualLeadName] = useState('');
@@ -123,7 +133,7 @@ export default function Home() {
 
     const messages = [
       "Searching Google & LinkedIn...",
-      "Analyzing profiles with Gemini...",
+      "Analyzing profiles with SayMe AI Engine...",
       "Extracting verified emails...",
       "Synthesizing bio summaries...",
       "Finalizing lead list..."
@@ -303,6 +313,34 @@ export default function Home() {
         generationFailed,
       };
 
+      try {
+        const saveRes = await fetch('/api/leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            campaignId,
+            targetAudience,
+            reasonForOutreach,
+            offering,
+            lead: newLead
+          })
+        });
+        const saveData = await saveRes.json();
+        if (saveRes.ok && saveData.lead) {
+          newLead._id = saveData.lead._id;
+          if (saveData.campaignId && !campaignId) {
+            setCampaignId(saveData.campaignId);
+          }
+        } else {
+          error(saveData.error || 'Failed to save lead to database');
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to save manual lead:', e);
+        error('Failed to save lead to database');
+        return;
+      }
+
       setLeads(prev => {
         const updated = [...prev, newLead];
         setSelectedLeadIndex(updated.length - 1);
@@ -450,9 +488,23 @@ export default function Home() {
                 </span>
               </div>
             )}
+            {usage && (
+              <div className="hidden sm:flex items-center gap-2 border-r border-slate-200 pr-3">
+                <span className={`text-[11px] font-bold uppercase tracking-wide ${usage.used >= usage.limit ? 'text-red-500' : 'text-slate-500'}`}>
+                  {usage.used}/{usage.limit} Leads Used
+                </span>
+              </div>
+            )}
+            {usage?.isAdmin && (
+              <div className="hidden sm:flex items-center gap-2 border-r border-slate-200 pr-3">
+                <Link href="/admin" className="text-[11px] font-bold text-blue-500 uppercase tracking-wide hover:underline">
+                  Admin
+                </Link>
+              </div>
+            )}
             <div className="hidden sm:flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Gemini Flash</span>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">SayMe AI Engine</span>
             </div>
             <button 
               className="xl:hidden p-2 -mr-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors"

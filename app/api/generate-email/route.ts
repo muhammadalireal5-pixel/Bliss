@@ -3,6 +3,7 @@ import { generateEmailTemplate, regenerateLeadEmail, populateEmailTemplate, gene
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { checkAndIncrementUsage } from '@/lib/usage';
 
 export async function POST(req: Request) {
   try {
@@ -79,17 +80,85 @@ export async function POST(req: Request) {
 
     if (!action) {
       // Backwards compatibility for the old endpoint payload
-      const { name, targetAudience, reasonForOutreach, offering } = body;
+      const { name, targetAudience, reasonForOutreach, offering, leads, campaignId } = body;
+      
+      // If leads array is passed without action (e.g. from CSV import)
+      if (leads && Array.isArray(leads)) {
+         // Enforce limit atomically
+         const reservation = await checkAndIncrementUsage(userId, leads.length);
+         if (!reservation.allowed) {
+            return NextResponse.json({ error: 'Monthly lead generation limit reached. Please upgrade to continue.' }, { status: 403 });
+         }
+         
+         const allowedLeads = leads.slice(0, reservation.reserved);
+         if (allowedLeads.length < reservation.reserved) {
+            const { refundUsage } = await import('@/lib/usage');
+            await refundUsage(userId, reservation.reserved - allowedLeads.length);
+         }
+         
+         const emails = await generateBatchEmails({
+           targetAudience: targetAudience || 'Custom Target',
+           reasonForOutreach: reasonForOutreach || 'Direct Outreach',
+           offering: offering || 'Collaboration Proposal',
+           tone: 'professional',
+           leads: allowedLeads,
+         });
+         
+         // Persist leads to database
+         let savedLeads: any[] = [];
+         if (campaignId) {
+            const { Lead } = await import('@/models/Lead');
+            const connectToDatabase = (await import('@/lib/db')).default;
+            await connectToDatabase();
+            
+            const docsToInsert = allowedLeads.map((l, i) => ({
+              campaignId,
+              userId,
+              name: l.name || 'Unknown',
+              email: l.email,
+              source: l.source || 'CSV Import',
+              subject: emails[i].subject,
+              draftEmail: emails[i].draftEmail,
+              status: 'draft',
+              confidence: 'verified',
+            }));
+            
+            savedLeads = await Lead.insertMany(docsToInsert);
+         }
+         
+         const results = allowedLeads.map((l, i) => ({
+            email: l.email,
+            emailDraft: emails[i].draftEmail,
+            subject: emails[i].subject,
+            success: true,
+            _id: savedLeads[i]?._id
+         }));
+         return NextResponse.json({ results });
+      }
+
       if (name && targetAudience && reasonForOutreach && offering) {
-        const { subject, draftEmail } = await generateEmailTemplate({
-          targetAudience,
-          reasonForOutreach,
-          offering,
-          tone: 'professional', // Default tone
-        });
+        // Enforce limit for manual leads atomically
+        const reservation = await checkAndIncrementUsage(userId, 1);
+        if (!reservation.allowed) {
+          return NextResponse.json({ error: 'Monthly lead generation limit reached. Please upgrade to continue.' }, { status: 403 });
+        }
         
-        const populated = populateEmailTemplate(draftEmail, { name });
-        return NextResponse.json({ subject, draftEmail: populated.draftEmail });
+        try {
+          const { subject, draftEmail } = await generateEmailTemplate({
+            targetAudience,
+            reasonForOutreach,
+            offering,
+            tone: 'professional', // Default tone
+          });
+          
+          const populated = populateEmailTemplate(draftEmail, { name });
+          return NextResponse.json({ subject, draftEmail: populated.draftEmail });
+        } catch (err) {
+          // Refund usage if generation fails
+          const { refundUsage } = await import('@/lib/usage');
+          await refundUsage(userId, 1);
+          throw err;
+        }
       }
     }
 

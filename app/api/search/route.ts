@@ -23,6 +23,8 @@ function buildQueries(targetAudience: string, offering: string): string[] {
   ];
 }
 
+import { checkAndIncrementUsage, getUserUsage } from '@/lib/usage';
+
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -34,6 +36,12 @@ export async function POST(req: Request) {
     const rateLimit = await checkRateLimit(`search:${userId}`, { limit: 30, windowSeconds: 60 });
     if (!rateLimit.allowed) {
       return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
+    }
+
+    const usage = await getUserUsage(userId);
+    const remaining = Math.max(0, usage.limit - usage.used);
+    if (remaining <= 0) {
+      return NextResponse.json({ error: 'Monthly lead generation limit reached. Please upgrade to continue.' }, { status: 403 });
     }
 
     const { targetAudience, offering = '' } = await req.json();
@@ -49,9 +57,30 @@ export async function POST(req: Request) {
     }
 
     const cacheKey = `search:${crypto.createHash('sha256').update(targetAudience + offering).digest('hex')}`;
-    const cachedLeads = await redis.get(cacheKey);
-    if (cachedLeads) {
-      return NextResponse.json({ leads: cachedLeads });
+    const cachedLeadsStr = await redis.get(cacheKey);
+    if (cachedLeadsStr) {
+      try {
+        const cachedLeads = typeof cachedLeadsStr === 'string' ? JSON.parse(cachedLeadsStr) : cachedLeadsStr;
+        let finalCached = Array.isArray(cachedLeads) ? cachedLeads : [];
+        
+        // Atomically reserve
+        const cacheReservation = await checkAndIncrementUsage(userId, finalCached.length);
+        if (!cacheReservation.allowed) {
+           return NextResponse.json({ error: 'Monthly lead generation limit reached. Please upgrade to continue.' }, { status: 403 });
+        }
+        
+        finalCached = finalCached.slice(0, cacheReservation.reserved);
+        
+        // Refund if we reserved more than we needed (shouldn't happen here, but safe)
+        if (finalCached.length < cacheReservation.reserved) {
+          const { refundUsage } = await import('@/lib/usage');
+          await refundUsage(userId, cacheReservation.reserved - finalCached.length);
+        }
+
+        return NextResponse.json({ leads: finalCached });
+      } catch (e) {
+        console.error('Failed to parse cached leads', e);
+      }
     }
 
     const queries = buildQueries(targetAudience, offering);
@@ -110,9 +139,15 @@ export async function POST(req: Request) {
     const prompt = `Extract name, email, company domain, platform, profileUrl, and a brief 1-2 sentence summary/bio of the person from these search results. Return null for name or email if not confidently found. Do not hallucinate.
 ${JSON.stringify(enrichedResults)}`;
 
+    // Fix: check and reserve atomic quota before generating
+    const reservation = await checkAndIncrementUsage(userId, enrichedResults.length);
+    if (!reservation.allowed) {
+      return NextResponse.json({ error: 'Monthly lead generation limit reached. Please upgrade to continue.' }, { status: 403 });
+    }
+
     try {
       const geminiResponse = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash-lite',
         contents: prompt,
         config: {
           temperature: 0,
@@ -186,7 +221,16 @@ ${JSON.stringify(enrichedResults)}`;
       await redis.set(cacheKey, JSON.stringify(leads), { ex: 21600 });
     }
 
-    return NextResponse.json({ leads });
+    // Limit to the reserved quota
+    const finalLeads = leads.slice(0, reservation.reserved);
+    
+    // Refund the difference if we extracted fewer leads than reserved
+    if (finalLeads.length < reservation.reserved) {
+      const { refundUsage } = await import('@/lib/usage');
+      await refundUsage(userId, reservation.reserved - finalLeads.length);
+    }
+
+    return NextResponse.json({ leads: finalLeads });
   } catch (error: any) {
     console.error('Search API Error:', error);
     return NextResponse.json({ error: error.message || 'Failed to search for leads' }, { status: 500 });

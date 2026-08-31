@@ -1,7 +1,7 @@
 import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { connectToDatabase } from "./mongodb";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -32,8 +32,8 @@ export const authOptions: NextAuthOptions = {
         }
 
         console.log('[AUTHORIZE] Comparing password with bcrypt...');
-        const isPasswordValid = bcrypt.compareSync(credentials.password, user.password);
-        console.log('[AUTHORIZE] bcrypt.compareSync() resolved. isValid:', isPasswordValid);
+        const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
+        console.log('[AUTHORIZE] await bcrypt.compare() resolved. isValid:', isPasswordValid);
 
         if (!isPasswordValid) {
           throw new Error('Invalid password');

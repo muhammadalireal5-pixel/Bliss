@@ -39,8 +39,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-.dev.vars
-.open-next
-.wrangler/
 client_secret*.json
 credentials*.json
