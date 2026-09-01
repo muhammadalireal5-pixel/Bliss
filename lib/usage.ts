@@ -3,9 +3,9 @@ import { User } from '@/models/User';
 import { Types } from 'mongoose';
 
 export const TIER_LIMITS: Record<string, number> = {
-  Free: 10,
-  Basic: 50,
-  Pro: 120
+  Free: 5,
+  Basic: 150,
+  Pro: 500
 };
 
 export async function checkAndIncrementUsage(userId: string, count: number): Promise<{ allowed: boolean; remaining: number; reserved: number }> {
