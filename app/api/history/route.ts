@@ -47,6 +47,6 @@ export async function GET() {
     return NextResponse.json({ history });
   } catch (error: any) {
     console.error('Fetch History Error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to fetch history' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch history' }, { status: 500 });
   }
 }

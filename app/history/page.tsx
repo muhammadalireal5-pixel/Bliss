@@ -58,7 +58,7 @@ export default function HistoryPage() {
       })
       .catch((err) => {
         console.error(err);
-        setError(err.message || 'Failed to load history');
+        setError('Failed to load history');
       })
       .finally(() => setLoading(false));
   }, [hasFetched, status]);

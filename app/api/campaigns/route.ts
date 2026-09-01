@@ -66,6 +66,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, campaignId: newCampaign._id });
   } catch (error: any) {
     console.error('Save Campaign Error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to save campaign' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to save campaign' }, { status: 500 });
   }
 }

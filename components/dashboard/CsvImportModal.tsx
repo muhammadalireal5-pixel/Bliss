@@ -66,10 +66,12 @@ export default function CsvImportModal({ isOpen, onClose, onImport }: CsvImportM
         onImport(data.leads);
         onClose();
       } else {
-        alert(data.error);
+        console.error(data.error);
+        alert('Failed to import leads');
       }
     } catch (e) {
-      alert('Error importing');
+      console.error(e);
+      alert('Failed to import leads');
     } finally {
       setLoading(false);
     }

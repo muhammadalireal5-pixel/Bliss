@@ -17,6 +17,6 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ account: account || null });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message || 'Failed to fetch status' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch status' }, { status: 500 });
   }
 }

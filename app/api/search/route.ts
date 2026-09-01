@@ -246,6 +246,6 @@ ${JSON.stringify(enrichedResults)}`;
       const { refundUsage } = await import('@/lib/usage');
       try { await refundUsage(sessionUserId, reservedQuota); } catch (e) { console.error('Refund failed on error', e); }
     }
-    return NextResponse.json({ error: error.message || 'Failed to search for leads' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to search for leads' }, { status: 500 });
   }
 }

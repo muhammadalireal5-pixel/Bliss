@@ -48,10 +48,12 @@ export default function RightSidebar({
         success(`Queued ${data.queuedCount} emails to send.`);
         // Note: the leads array would ideally update state to 'queued', but they will reload anyway when user refreshes.
       } else {
-        error(data.error || 'Failed to queue emails');
+        console.error(data.error);
+        error('Failed to queue emails');
       }
     } catch (e: any) {
-      error(e.message || 'Error occurred');
+      console.error(e);
+      error('Failed to queue emails');
     } finally {
       setSendingAll(false);
     }

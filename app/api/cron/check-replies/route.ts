@@ -55,6 +55,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ status: 'success' });
   } catch (error: any) {
     console.error('Check Replies Cron Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to check replies' }, { status: 500 });
   }
 }

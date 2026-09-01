@@ -60,6 +60,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, lead: newLead, campaignId });
   } catch (error: any) {
     console.error('Save Lead Error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to save lead' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to save lead' }, { status: 500 });
   }
 }

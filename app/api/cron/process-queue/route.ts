@@ -104,6 +104,6 @@ Make it sound natural, casual, and brief. Return JSON with { "subject": string, 
     return NextResponse.json({ status: 'success', processed: processedCount });
   } catch (error: any) {
     console.error('Process Queue Cron Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to process queue' }, { status: 500 });
   }
 }

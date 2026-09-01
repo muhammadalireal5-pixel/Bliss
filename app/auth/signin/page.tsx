@@ -29,7 +29,8 @@ export default function SignInPage() {
       });
 
       if (res?.error) {
-        setError(res.error);
+        console.error(res.error);
+        setError('Invalid email or password');
         setLoading(false);
       } else {
         router.push('/');

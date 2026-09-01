@@ -51,9 +51,11 @@ export default function EmailEditor({ activeLead, selectedLeadIndex, setLeads, r
           });
         }
       } else {
-        error(data.error || 'Failed to send email');
+        console.error(data.error);
+        error('Failed to send email');
       }
     } catch (e: any) {
+      console.error(e);
       error('Failed to send email');
     } finally {
       setSending(false);

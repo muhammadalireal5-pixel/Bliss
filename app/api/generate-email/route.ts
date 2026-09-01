@@ -172,7 +172,7 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error('Email Generation Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to generate email' },
+      { error: 'Failed to generate email' },
       { status: 500 }
     );
   }

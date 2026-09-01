@@ -266,7 +266,8 @@ export default function Home() {
       }
 
     } catch (err: any) {
-      error(err.message || 'An error occurred during lead generation');
+      console.error(err);
+      error('An error occurred during lead generation');
     } finally {
       clearInterval(msgInterval);
       setLoading(false);
@@ -326,14 +327,15 @@ export default function Home() {
           })
         });
         const saveData = await saveRes.json();
-        if (saveRes.ok && saveData.lead) {
+        if (!saveRes.ok || saveData.error) {
+          console.error(saveData.error);
+          error('Failed to save lead to database');
+          return;
+        } else if (saveData.lead) {
           newLead._id = saveData.lead._id;
           if (saveData.campaignId && !campaignId) {
             setCampaignId(saveData.campaignId);
           }
-        } else {
-          error(saveData.error || 'Failed to save lead to database');
-          return;
         }
       } catch (e) {
         console.error('Failed to save manual lead:', e);
@@ -391,7 +393,8 @@ export default function Home() {
       const genData = await genRes.json();
       
       if (!genRes.ok || genData.error) {
-        error(`Failed to regenerate: ${genData.error || 'Unknown error'}`);
+        console.error(genData.error);
+        error('Failed to regenerate email');
         setLeads(prev => {
           const updated = [...prev];
           updated[index] = { ...updated[index], regenerating: false };

@@ -49,7 +49,8 @@ export default function SignUpPage() {
       }
 
     } catch (err: any) {
-      setError(err.message || 'An error occurred during sign up');
+      console.error(err);
+      setError('An error occurred during sign up');
       setLoading(false);
     }
   };

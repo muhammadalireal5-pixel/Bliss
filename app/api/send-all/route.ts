@@ -65,6 +65,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, queuedCount: leadsToSend.length });
   } catch (error: any) {
     console.error('Send All Error:', error);
-    return NextResponse.json({ error: error.message || 'Failed to queue emails' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to queue emails' }, { status: 500 });
   }
 }
