@@ -153,9 +153,9 @@ export default function AdminDashboard() {
                       value={user.tier || 'Free'}
                       onChange={(e) => changeTier(user._id, e.target.value)}
                     >
-                      <option value="Free">Free (10/mo)</option>
-                      <option value="Basic">Basic (50/mo)</option>
-                      <option value="Pro">Pro (120/mo)</option>
+                      <option value="Free">Free (5/mo)</option>
+                      <option value="Basic">Basic (150/mo)</option>
+                      <option value="Pro">Pro (500/mo)</option>
                     </select>
                   </td>
                 </tr>
