@@ -27,7 +27,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ tracking
             firstAt: new Date() 
           }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
 
       if (event.count === 1) {

@@ -43,7 +43,7 @@ export async function checkAndIncrementUsage(userId: string, count: number): Pro
         }
       }
     ],
-    { new: false, updatePipeline: true } // return the OLD document to know how many were reserved
+    { returnDocument: 'before', updatePipeline: true } // return the OLD document to know how many were reserved
   );
 
   if (!updatedUser) {

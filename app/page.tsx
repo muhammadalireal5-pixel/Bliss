@@ -100,6 +100,7 @@ export default function Home() {
   const [manualLeadSource, setManualLeadSource] = useState('Manual');
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
   const [manualGenerating, setManualGenerating] = useState(false);
 
   // Follow-up configs
@@ -154,6 +155,11 @@ export default function Home() {
       });
       
       if (!searchRes.ok) {
+        if (searchRes.status === 403) {
+          setIsUpgradeModalOpen(true);
+          setLoading(false);
+          return;
+        }
         const errorText = await searchRes.text();
         throw new Error(`Search failed: ${errorText}`);
       }
@@ -747,6 +753,29 @@ export default function Home() {
           }
         }}
       />
+
+      <Modal isOpen={isUpgradeModalOpen} onClose={() => setIsUpgradeModalOpen(false)}>
+        <div className="text-center p-4">
+          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircle size={32} />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">Monthly Limit Reached</h2>
+          <p className="text-slate-600 mb-6">
+            You have reached your monthly lead generation limit. Please upgrade your plan to continue discovering new leads.
+          </p>
+          <div className="flex gap-3 justify-center">
+            <Button variant="secondary" onClick={() => setIsUpgradeModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => {
+              setIsUpgradeModalOpen(false);
+              router.push('/pricing'); // Assume a pricing page exists or will exist
+            }}>
+              Upgrade Plan
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

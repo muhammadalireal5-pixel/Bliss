@@ -54,7 +54,7 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'Invalid data' }, { status: 400 });
     }
 
-    const user = await User.findByIdAndUpdate(userId, { tier }, { new: true }).select('-password');
+    const user = await User.findByIdAndUpdate(userId, { tier }, { returnDocument: 'after' }).select('-password');
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
