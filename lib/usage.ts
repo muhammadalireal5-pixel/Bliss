@@ -43,7 +43,7 @@ export async function checkAndIncrementUsage(userId: string, count: number): Pro
         }
       }
     ],
-    { new: false } // return the OLD document to know how many were reserved
+    { new: false, updatePipeline: true } // return the OLD document to know how many were reserved
   );
 
   if (!updatedUser) {
@@ -74,7 +74,8 @@ export async function refundUsage(userId: string, count: number): Promise<void> 
           leadsUsedThisMonth: { $max: [0, { $subtract: ["$leadsUsedThisMonth", count] }] }
         }
       }
-    ]
+    ],
+    { updatePipeline: true }
   );
 }
 
