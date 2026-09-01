@@ -3,17 +3,27 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Users, Activity, ShieldAlert, CheckCircle, ChevronLeft } from 'lucide-react';
+import { Users, Activity, ShieldAlert,  ChevronLeft } from 'lucide-react';
 import Link from 'next/link';
+
+interface AdminUser {
+  _id: string;
+  name: string;
+  email: string;
+  createdAt: string | Date;
+  leadsUsedThisMonth: number;
+  tier: string;
+}
 
 export default function AdminDashboard() {
   const { data: session, status } = useSession();
   const router = useRouter();
   
   const [loading, setLoading] = useState(true);
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [stats, setStats] = useState({ totalUsers: 0, totalLeadsThisMonth: 0 });
   const [error, setError] = useState('');
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -40,6 +50,7 @@ export default function AdminDashboard() {
   }, [status, router]);
 
   const changeTier = async (userId: string, newTier: string) => {
+    setUpdatingUserId(userId);
     try {
       const res = await fetch('/api/admin/users', {
         method: 'PUT',
@@ -54,6 +65,8 @@ export default function AdminDashboard() {
       }
     } catch (err) {
       alert('Failed to update tier');
+    } finally {
+      setUpdatingUserId(null);
     }
   };
 
@@ -148,15 +161,21 @@ export default function AdminDashboard() {
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">
-                    <select 
-                      className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 font-medium focus:ring-2 focus:ring-primary focus:outline-none"
-                      value={user.tier || 'Free'}
-                      onChange={(e) => changeTier(user._id, e.target.value)}
-                    >
-                      <option value="Free">Free (5/mo)</option>
-                      <option value="Basic">Basic (150/mo)</option>
-                      <option value="Pro">Pro (500/mo)</option>
-                    </select>
+                    <div className="flex items-center justify-end gap-2">
+                      <select 
+                        className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 font-medium focus:ring-2 focus:ring-primary focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                        value={user.tier || 'Free'}
+                        onChange={(e) => changeTier(user._id, e.target.value)}
+                        disabled={updatingUserId === user._id}
+                      >
+                        <option value="Free">Free (5/mo)</option>
+                        <option value="Basic">Basic (150/mo)</option>
+                        <option value="Pro">Pro (500/mo)</option>
+                      </select>
+                      {updatingUserId === user._id && (
+                        <Activity size={16} className="text-primary animate-spin" />
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

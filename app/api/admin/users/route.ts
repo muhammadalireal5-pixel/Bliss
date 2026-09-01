@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { User } from '@/models/User';
 import connectToDatabase from '@/lib/db';
-import { TIER_LIMITS } from '@/lib/usage';
+import { TIER_LIMITS, isUsageStale } from '@/lib/usage';
 
 async function verifyAdmin() {
   const session = await getServerSession(authOptions);
@@ -25,8 +25,16 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const users = await User.find({}).select('-password').sort({ createdAt: -1 });
+    const rawUsers = await User.find({}).select('-password -isAdmin').sort({ createdAt: -1 }).lean();
     
+    const now = new Date();
+    const users = rawUsers.map(user => {
+      if (isUsageStale(user.lastResetDate, now)) {
+        user.leadsUsedThisMonth = 0;
+      }
+      return user;
+    });
+
     // Calculate total leads generated this month
     const totalLeadsThisMonth = users.reduce((acc, user) => acc + (user.leadsUsedThisMonth || 0), 0);
     

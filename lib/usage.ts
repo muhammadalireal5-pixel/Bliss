@@ -8,6 +8,11 @@ export const TIER_LIMITS: Record<string, number> = {
   Pro: 500
 };
 
+export function isUsageStale(lastResetDate: Date | undefined | null, now = new Date()): boolean {
+  if (!lastResetDate) return true;
+  return lastResetDate.getMonth() !== now.getMonth() || lastResetDate.getFullYear() !== now.getFullYear();
+}
+
 export async function checkAndIncrementUsage(userId: string, count: number): Promise<{ allowed: boolean; remaining: number; reserved: number }> {
   if (!Number.isSafeInteger(count) || count < 0) {
     throw new Error('Invalid count');
@@ -15,19 +20,20 @@ export async function checkAndIncrementUsage(userId: string, count: number): Pro
 
   await connectToDatabase();
   
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  
-  // 1. Reset month if needed
-  await User.updateOne(
-    { _id: userId, lastResetDate: { $lt: startOfMonth } },
-    { $set: { leadsUsedThisMonth: 0, lastResetDate: now } }
-  );
-
-  // 2. Snapshot to get tier
+  // 1. Snapshot to get tier and check staleness
   const user = await User.findById(userId);
   if (!user) {
     throw new Error('User not found');
+  }
+
+  const now = new Date();
+  
+  // 2. Reset month if needed
+  if (isUsageStale(user.lastResetDate, now)) {
+    await User.updateOne(
+      { _id: userId, lastResetDate: user.lastResetDate },
+      { $set: { leadsUsedThisMonth: 0, lastResetDate: now } }
+    );
   }
 
   const limit = TIER_LIMITS[user.tier] || TIER_LIMITS.Free;
@@ -90,7 +96,7 @@ export async function getUserUsage(userId: string): Promise<{ used: number; limi
   const now = new Date();
   let used = user.leadsUsedThisMonth || 0;
   
-  if (user.lastResetDate && (user.lastResetDate.getMonth() !== now.getMonth() || user.lastResetDate.getFullYear() !== now.getFullYear())) {
+  if (isUsageStale(user.lastResetDate, now)) {
     used = 0;
   }
 
