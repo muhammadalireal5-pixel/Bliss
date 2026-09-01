@@ -41,11 +41,23 @@ export async function checkAndIncrementUsage(userId: string, count: number): Pro
   // 3. Atomic check-and-reserve using aggregation pipeline (requires MongoDB 4.2+)
   // We want to add up to `count` leads, but not exceeding `limit`.
   const updatedUser = await User.findOneAndUpdate(
-    { _id: userId, leadsUsedThisMonth: { $lt: limit } },
+    { 
+      _id: userId, 
+      $or: [
+        { leadsUsedThisMonth: { $lt: limit } },
+        { leadsUsedThisMonth: { $exists: false } },
+        { leadsUsedThisMonth: null }
+      ] 
+    },
     [
       {
         $set: {
-          leadsUsedThisMonth: { $min: [ limit, { $add: ["$leadsUsedThisMonth", count] } ] }
+          leadsUsedThisMonth: { 
+            $min: [ 
+              limit, 
+              { $add: [{ $ifNull: ["$leadsUsedThisMonth", 0] }, count] } 
+            ] 
+          }
         }
       }
     ],
@@ -57,7 +69,7 @@ export async function checkAndIncrementUsage(userId: string, count: number): Pro
     return { allowed: false, remaining: 0, reserved: 0 };
   }
 
-  const oldUsed = updatedUser.leadsUsedThisMonth;
+  const oldUsed = updatedUser.leadsUsedThisMonth || 0;
   const newUsed = Math.min(limit, oldUsed + count);
   const reserved = newUsed - oldUsed;
   const remaining = limit - newUsed;
@@ -77,7 +89,7 @@ export async function refundUsage(userId: string, count: number): Promise<void> 
     [
       {
         $set: {
-          leadsUsedThisMonth: { $max: [0, { $subtract: ["$leadsUsedThisMonth", count] }] }
+          leadsUsedThisMonth: { $max: [0, { $subtract: [{ $ifNull: ["$leadsUsedThisMonth", 0] }, count] }] }
         }
       }
     ],
