@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth';
 import { UserMailAccount } from '@/models/UserMailAccount';
 import connectToDatabase from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(req: Request) {
   try {
     const session = await getServerSession(authOptions);
