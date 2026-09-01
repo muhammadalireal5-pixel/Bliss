@@ -6,8 +6,9 @@ import { decrypt } from '@/lib/crypto';
 import { refreshMicrosoftToken } from '@/lib/mailSenders/token-refresh';
 
 export async function GET(req: Request) {
-  const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Validate CRON_SECRET for security using custom header
+  const cronSecret = req.headers.get('x-cron-secret');
+  if (cronSecret !== process.env.CRON_SECRET) {
     return new Response('Unauthorized', { status: 401 });
   }
 

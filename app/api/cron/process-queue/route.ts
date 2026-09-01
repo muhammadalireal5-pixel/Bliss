@@ -7,9 +7,9 @@ import { GoogleGenAI } from '@google/genai';
 import mongoose from 'mongoose';
 
 export async function GET(req: Request) {
-  // Validate CRON_SECRET for security
-  const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Validate CRON_SECRET for security using custom header
+  const cronSecret = req.headers.get('x-cron-secret');
+  if (cronSecret !== process.env.CRON_SECRET) {
     return new Response('Unauthorized', { status: 401 });
   }
 
