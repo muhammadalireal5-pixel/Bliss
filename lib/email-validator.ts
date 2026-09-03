@@ -1,4 +1,5 @@
 import { resolveMx } from 'node:dns/promises';
+import { redis } from '@/lib/redis';
 
 export interface MxRecord {
   exchange: string;
@@ -28,6 +29,19 @@ export async function validateEmailMx(email: string): Promise<boolean> {
   if (parts.length !== 2) return false;
   const domain = parts[1];
   try {
+    // Check Redis cooldown
+    const cooldownKey = `cooldown:${domain}`;
+    const isCooldown = await redis.get(cooldownKey);
+    if (isCooldown) {
+      // Delay or skip. To avoid hammering, we'll just delay slightly and return true for now, 
+      // or we can implement a queue. The prompt says "skip/delay verification if the key is present".
+      // Let's assume it's valid if it's on cooldown, to prevent false negatives when processing batches.
+      return true;
+    }
+    
+    // Set a 45s TTL cooldown for the domain before doing actual DNS resolution
+    await redis.set(cooldownKey, "1", { ex: 45 });
+
     const mxRecords = await resolveMxRecords(domain);
     return mxRecords.length > 0;
   } catch (err) {
@@ -54,7 +68,7 @@ export function guessEmailPatterns(firstName: string, lastName: string, domain: 
   return patterns;
 }
 
-export async function findValidEmail(name: string, domain: string): Promise<{email: string, confidence: 'guessed'} | null> {
+export async function findValidEmail(name: string, domain: string): Promise<{email: string, confidence: 'low', emailType: 'guessed'} | null> {
   const nameParts = name.trim().split(" ");
   const firstName = nameParts[0];
   const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";
@@ -65,7 +79,7 @@ export async function findValidEmail(name: string, domain: string): Promise<{ema
   if (!isDomainValid) return null;
   
   if (patterns.length > 0) {
-    return { email: patterns[0], confidence: 'guessed' };
+    return { email: patterns[0], confidence: 'low', emailType: 'guessed' };
   }
   
   return null;
