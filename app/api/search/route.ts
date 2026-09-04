@@ -667,6 +667,8 @@ Return a JSON array of 9 objects with fields "query" (string) and "queryType" ("
 Instruct:
 1. Prefer personal-looking emails (Gmail, Yahoo, Outlook, ProtonMail, or firstname@personaldomain.com) over generic info@/support@ on large corporate sites. Return null for Email in the generic/large-corporate case rather than guessing.
 2. For "domain": Extract the person's own personal or company website domain (e.g. "authorname.com" or "janedoe.org") if mentioned in the page text, snippet, bio, or links. Do NOT use shared hosting or platform domains (like "substack.com", "medium.com", "reddit.com", "quora.com", "tumblr.com", "twitter.com", "linkedin.com") as their personal domain; return null for domain instead if no independent domain exists.
+3. Determine the "entityType": "individual" or "business". Does the byline/about page describe a single named person, or a company/team/service? Does the page pitch services *to* the target audience (editing, publishing, coaching, tools) rather than being written *by* a member of that audience? Is the email domain a company name rather than a personal name? If it's a company, agency, or service provider, classify as "business". If it's a single creator/writer, classify as "individual".
+4. Provide "entityReasoning": A brief sentence explaining why you chose "individual" or "business".
 Also include:
 - itemIndex: integer 0-based index matching which item this lead came from
 - emailType: "personal" | "generic" | "guessed" | null
@@ -695,9 +697,11 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
                     profileUrl: { type: Type.STRING },
                     summary: { type: Type.STRING, nullable: true },
                     emailType: { type: Type.STRING, enum: ["personal", "generic", "guessed", null], nullable: true },
-                    confidence: { type: Type.STRING, enum: ["high", "medium", "low"] }
+                    confidence: { type: Type.STRING, enum: ["high", "medium", "low"] },
+                    entityType: { type: Type.STRING, enum: ["individual", "business"] },
+                    entityReasoning: { type: Type.STRING }
                   },
-                  required: ["name", "platform", "profileUrl", "confidence"]
+                  required: ["name", "platform", "profileUrl", "confidence", "entityType", "entityReasoning"]
                 }
               }
             }
@@ -707,10 +711,20 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
             const matchedItem = (l.itemIndex !== undefined && items[l.itemIndex])
               ? items[l.itemIndex]
               : items.find(i => i.link === l.profileUrl);
+              
+            let resolvedEmail = l.email;
+            if (!resolvedEmail && matchedItem?.scrapedEmails && matchedItem.scrapedEmails.length > 0) {
+              resolvedEmail = matchedItem.scrapedEmails[0];
+            }
+              
             return {
               ...l,
+              email: resolvedEmail,
+              profileUrl: matchedItem?.link || l.profileUrl,
               queryType: matchedItem?.queryType || 'pain-point',
-              bioPersonalUrl: matchedItem?.bioPersonalUrl
+              bioPersonalUrl: matchedItem?.bioPersonalUrl,
+              entityType: l.entityType || 'individual',
+              entityReasoning: l.entityReasoning || ''
             };
           });
        } catch (e) {
@@ -721,8 +735,9 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
 
     let extractedA: any[] = [];
     try {
-      extractedA = await extractLeadsWithGemini(processedBucketA);
-      searchLog.extraction.bucketARaw = extractedA;
+      const rawExtractedA = await extractLeadsWithGemini(processedBucketA);
+      searchLog.extraction.bucketARaw = rawExtractedA;
+      extractedA = rawExtractedA.filter((l: any) => l.entityType === 'individual');
     } catch (e: any) {
       if (e.message === 'QUOTA_EXCEEDED') {
         searchLog.error = 'QUOTA_EXCEEDED';
@@ -770,7 +785,7 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
                bucketBGuesses++;
              }
            }
-           if (l.email || (l.name && l.name.trim() !== 'Unknown')) {
+           if (l.entityType === 'individual' && (l.email || (l.name && l.name.trim() !== 'Unknown'))) {
              extractedB.push(l);
            }
         }
@@ -969,7 +984,9 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
         queryType: l.queryType || 'pain-point',
         profileUrl: l.profileUrl || l.link || '',
         source: sourceName,
-        summary: l.summary || undefined
+        summary: l.summary || undefined,
+        entityType: l.entityType,
+        entityReasoning: l.entityReasoning
       });
     }
 
