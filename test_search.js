@@ -29,5 +29,11 @@ const req = http.request({
 });
 
 req.on('error', console.error);
-req.write(JSON.stringify({ targetAudience: 'writers', bypassCache: true }));
+const bypassCache = process.argv.includes('--bypass-cache');
+
+req.write(JSON.stringify({
+  targetAudience: 'writers',
+  offering: 'we will publish and market your book for free, we only take 50% of gross incomme',
+  bypassCache
+}));
 req.end();

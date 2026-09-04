@@ -12,6 +12,20 @@ import { Lead } from '@/models/Lead';
 import { checkAndIncrementUsage, getUserUsage, refundUsage } from '@/lib/usage';
 import { persistSearchLog } from '@/lib/search-logger';
 
+// Helper to handle Gemini model fallbacks
+async function generateContentWithFallback(ai: GoogleGenAI, prompt: string, config: any) {
+  const models = ['gemini-3.5-flash-lite', 'gemini-3.7-flash-lite', 'gemini-3.8-flash-lite'];
+  let lastError: any;
+  for (const model of models) {
+    try {
+      return await ai.models.generateContent({ model, contents: prompt, config });
+    } catch (e: any) {
+      lastError = e;
+      console.warn(`Model ${model} failed, falling back...`, e?.message || e);
+    }
+  }
+  throw lastError;
+}
 // Helper to get root domain
 function getRootDomain(urlStr: string): string {
   try {
@@ -226,18 +240,22 @@ export async function POST(req: Request) {
         const cachedLeads = typeof cachedLeadsStr === 'string' ? JSON.parse(cachedLeadsStr) : cachedLeadsStr;
         let finalCached = Array.isArray(cachedLeads) ? cachedLeads : [];
         
-        // Atomically reserve
-        const cacheReservation = await checkAndIncrementUsage(userId, finalCached.length);
-        if (!cacheReservation.allowed) {
+        const emailLeads = finalCached.filter(l => l.contactMethod === 'email');
+        const sourceOnlyLeads = finalCached.filter(l => l.contactMethod !== 'email');
+
+        // Atomically reserve only for email leads
+        const cacheReservation = await checkAndIncrementUsage(userId, emailLeads.length);
+        if (!cacheReservation.allowed && emailLeads.length > 0 && cacheReservation.reserved === 0) {
            return NextResponse.json({ error: 'Monthly lead generation limit reached. Please upgrade to continue.' }, { status: 403 });
         }
         reservedQuota = cacheReservation.reserved;
         
-        finalCached = finalCached.slice(0, reservedQuota);
+        const allowedEmailLeads = emailLeads.slice(0, reservedQuota);
+        finalCached = [...allowedEmailLeads, ...sourceOnlyLeads];
         
-        if (finalCached.length < reservedQuota) {
-          await refundUsage(userId, reservedQuota - finalCached.length);
-          reservedQuota = finalCached.length;
+        if (allowedEmailLeads.length < reservedQuota) {
+          await refundUsage(userId, reservedQuota - allowedEmailLeads.length);
+          reservedQuota = allowedEmailLeads.length;
         }
 
         // Annotate cached leads with live cross-campaign contact status
@@ -302,22 +320,18 @@ Return a JSON array of 9 objects with fields "query" (string) and "queryType" ("
 
     let generatedQueries: Array<{ query: string; queryType: 'pain-point' | 'contact-invite' | 'broad-identity' }> = [];
     try {
-      const queryRes = await ai.models.generateContent({
-        model: 'gemini-3.5-flash-lite',
-        contents: expansionPrompt,
-        config: {
-          temperature: 0.7,
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                query: { type: Type.STRING },
-                queryType: { type: Type.STRING, enum: ['pain-point', 'contact-invite', 'broad-identity'] }
-              },
-              required: ['query', 'queryType']
-            }
+      const queryRes = await generateContentWithFallback(ai, expansionPrompt, {
+        temperature: 0.7,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              query: { type: Type.STRING },
+              queryType: { type: Type.STRING, enum: ['pain-point', 'contact-invite', 'broad-identity'] }
+            },
+            required: ['query', 'queryType']
           }
         }
       });
@@ -494,7 +508,7 @@ Return a JSON array of 9 objects with fields "query" (string) and "queryType" ("
       if (!toBucketB) {
         if (lowerUrl.includes('/contact') || lowerUrl.includes('/about') || lowerUrl.includes('/team') || lowerUrl.includes('/hire-me') || lowerUrl.includes('/work-with-me')) {
           isBucketA = true;
-        } else if (res.isSubdomainPlatform && domain.endsWith('.substack.com')) {
+        } else if (res.isSubdomainPlatform) {
           isBucketA = true; // Creator publication Substack
         } else if (!res.isSubdomainPlatform && !res.isPostPlatform && rootDomain.split('.').length === 2) {
           isBucketA = true; // Independent custom domain
@@ -678,31 +692,27 @@ Results:
 ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet: i.snippet, link: i.link, pageContent: i.pageContent, scrapedEmails: i.scrapedEmails})))}`;
 
        try {
-          const geminiResponse = await ai.models.generateContent({
-            model: 'gemini-3.5-flash-lite',
-            contents: prompt,
-            config: {
-              temperature: 0.1,
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    itemIndex: { type: Type.INTEGER, nullable: true },
-                    name: { type: Type.STRING, nullable: true },
-                    email: { type: Type.STRING, nullable: true },
-                    domain: { type: Type.STRING, nullable: true },
-                    platform: { type: Type.STRING, enum: ["linkedin", "twitter", "github", "producthunt", "medium", "dribbble", "other"] },
-                    profileUrl: { type: Type.STRING },
-                    summary: { type: Type.STRING, nullable: true },
-                    emailType: { type: Type.STRING, enum: ["personal", "generic", "guessed", null], nullable: true },
-                    confidence: { type: Type.STRING, enum: ["high", "medium", "low"] },
-                    audienceMatch: { type: Type.STRING, enum: ["member", "service-provider", "unclear"] },
-                    audienceReasoning: { type: Type.STRING }
-                  },
-                  required: ["name", "platform", "profileUrl", "confidence", "audienceMatch", "audienceReasoning"]
-                }
+          const geminiResponse = await generateContentWithFallback(ai, prompt, {
+            temperature: 0.1,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  itemIndex: { type: Type.INTEGER, nullable: true },
+                  name: { type: Type.STRING, nullable: true },
+                  email: { type: Type.STRING, nullable: true },
+                  domain: { type: Type.STRING, nullable: true },
+                  platform: { type: Type.STRING, enum: ["linkedin", "twitter", "github", "producthunt", "medium", "dribbble", "other"] },
+                  profileUrl: { type: Type.STRING },
+                  summary: { type: Type.STRING, nullable: true },
+                  emailType: { type: Type.STRING, enum: ["personal", "generic", "guessed", null], nullable: true },
+                  confidence: { type: Type.STRING, enum: ["high", "medium", "low"] },
+                  audienceMatch: { type: Type.STRING, enum: ["member", "service-provider", "unclear"] },
+                  audienceReasoning: { type: Type.STRING }
+                },
+                required: ["name", "platform", "profileUrl", "confidence", "audienceMatch", "audienceReasoning"]
               }
             }
           });
@@ -808,7 +818,7 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
     if (unresolvedLeads.length > 0) {
       console.log(`[SearchAPI][SecondaryEnrichment] Found ${unresolvedLeads.length} unresolved leads with names. Firing targeted Serper searches...`);
 
-      for (const l of unresolvedLeads) {
+      await Promise.all(unresolvedLeads.map(async (l) => {
         const enrichmentQuery = `"${l.name}" personal website OR portfolio OR contact`;
         let resultsConsidered: any[] = [];
         let targetPersonalUrl: string | null = null;
@@ -886,17 +896,13 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
               } else if (candidateText && candidateText.length > 50) {
                 // If text exists, use quick Gemini extraction to locate contact email
                 try {
-                  const quickGemini = await ai.models.generateContent({
-                    model: 'gemini-3.5-flash-lite',
-                    contents: `From the following webpage text of ${l.name}'s website, extract their personal contact email address (or their agent/representative contact email). If none is found, return null. Return only JSON: { "email": string | null }\n\nWebpage text:\n${candidateText.slice(0, 2500)}`,
-                    config: {
-                      temperature: 0.1,
-                      responseMimeType: 'application/json',
-                      responseSchema: {
-                        type: Type.OBJECT,
-                        properties: {
-                          email: { type: Type.STRING, nullable: true }
-                        }
+                  const quickGemini = await generateContentWithFallback(ai, `From the following webpage text of ${l.name}'s website, extract their personal contact email address (or their agent/representative contact email). If none is found, return null. Return only JSON: { "email": string | null }\n\nWebpage text:\n${candidateText.slice(0, 2500)}`, {
+                    temperature: 0.1,
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                        email: { type: Type.STRING, nullable: true }
                       }
                     }
                   });
@@ -929,7 +935,7 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
           emailFound: !!l.email ? 'Y' : 'N',
           resolvedEmail: l.email || null
         });
-      }
+      }));
     }
 
     // PHASE 8: Final Leads Assembly & Hybrid Deduplication (Email Ready + Source-Only)
