@@ -663,12 +663,12 @@ Return a JSON array of 9 objects with fields "query" (string) and "queryType" ("
        }
        reservedQuota += reservation.reserved;
 
-       const prompt = `Extract name, email, company domain, platform, profileUrl, and a brief 1-2 sentence summary/bio of the person from these search results.
+       const prompt = `Extract name, email, company domain, platform, profileUrl, and a brief 1-2 sentence summary/bio of the person from these search results. You MUST return an object for EVERY item provided in the Results, even if they are service-providers or you cannot find an email. Do not skip items.
 Instruct:
 1. Prefer personal-looking emails (Gmail, Yahoo, Outlook, ProtonMail, or firstname@personaldomain.com) over generic info@/support@ on large corporate sites. Return null for Email in the generic/large-corporate case rather than guessing.
 2. For "domain": Extract the person's own personal or company website domain (e.g. "authorname.com" or "janedoe.org") if mentioned in the page text, snippet, bio, or links. Do NOT use shared hosting or platform domains (like "substack.com", "medium.com", "reddit.com", "quora.com", "tumblr.com", "twitter.com", "linkedin.com") as their personal domain; return null for domain instead if no independent domain exists.
-3. Determine the "entityType": "individual" or "business". Does the byline/about page describe a single named person, or a company/team/service? Does the page pitch services *to* the target audience (editing, publishing, coaching, tools) rather than being written *by* a member of that audience? Is the email domain a company name rather than a personal name? If it's a company, agency, or service provider, classify as "business". If it's a single creator/writer, classify as "individual".
-4. Provide "entityReasoning": A brief sentence explaining why you chose "individual" or "business".
+3. Determine the "audienceMatch": "member", "service-provider", or "unclear". Based on how this person describes themselves and their work, are they a "${targetAudience}" themselves, or do they provide services/products to "${targetAudience}"? Someone who edits, coaches, consults for, or sells services to this audience is NOT a member of it, even if their content is about the same topic. Use "unclear" for genuinely ambiguous cases rather than forcing a guess.
+4. Provide "audienceReasoning": A brief sentence explaining why you chose "member", "service-provider", or "unclear".
 Also include:
 - itemIndex: integer 0-based index matching which item this lead came from
 - emailType: "personal" | "generic" | "guessed" | null
@@ -698,10 +698,10 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
                     summary: { type: Type.STRING, nullable: true },
                     emailType: { type: Type.STRING, enum: ["personal", "generic", "guessed", null], nullable: true },
                     confidence: { type: Type.STRING, enum: ["high", "medium", "low"] },
-                    entityType: { type: Type.STRING, enum: ["individual", "business"] },
-                    entityReasoning: { type: Type.STRING }
+                    audienceMatch: { type: Type.STRING, enum: ["member", "service-provider", "unclear"] },
+                    audienceReasoning: { type: Type.STRING }
                   },
-                  required: ["name", "platform", "profileUrl", "confidence", "entityType", "entityReasoning"]
+                  required: ["name", "platform", "profileUrl", "confidence", "audienceMatch", "audienceReasoning"]
                 }
               }
             }
@@ -723,8 +723,8 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
               profileUrl: matchedItem?.link || l.profileUrl,
               queryType: matchedItem?.queryType || 'pain-point',
               bioPersonalUrl: matchedItem?.bioPersonalUrl,
-              entityType: l.entityType || 'individual',
-              entityReasoning: l.entityReasoning || ''
+              audienceMatch: l.audienceMatch || 'unclear',
+              audienceReasoning: l.audienceReasoning || ''
             };
           });
        } catch (e) {
@@ -737,7 +737,7 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
     try {
       const rawExtractedA = await extractLeadsWithGemini(processedBucketA);
       searchLog.extraction.bucketARaw = rawExtractedA;
-      extractedA = rawExtractedA.filter((l: any) => l.entityType === 'individual');
+      extractedA = rawExtractedA.filter((l: any) => l.audienceMatch === 'member');
     } catch (e: any) {
       if (e.message === 'QUOTA_EXCEEDED') {
         searchLog.error = 'QUOTA_EXCEEDED';
@@ -785,7 +785,7 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
                bucketBGuesses++;
              }
            }
-           if (l.entityType === 'individual' && (l.email || (l.name && l.name.trim() !== 'Unknown'))) {
+           if (l.audienceMatch === 'member' && (l.email || (l.name && l.name.trim() !== 'Unknown'))) {
              extractedB.push(l);
            }
         }
@@ -985,8 +985,8 @@ ${JSON.stringify(items.map((i, idx) => ({itemIndex: idx, title: i.title, snippet
         profileUrl: l.profileUrl || l.link || '',
         source: sourceName,
         summary: l.summary || undefined,
-        entityType: l.entityType,
-        entityReasoning: l.entityReasoning
+        audienceMatch: l.audienceMatch,
+        audienceReasoning: l.audienceReasoning
       });
     }
 

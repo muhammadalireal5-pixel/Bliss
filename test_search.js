@@ -7,7 +7,7 @@ const req = http.request({
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'x-internal-user-id': 'test-user-id' // bypassed auth for dev
+    'x-internal-user-id': 'test-user-id'
   }
 }, (res) => {
   let data = '';
@@ -17,7 +17,7 @@ const req = http.request({
       const parsed = JSON.parse(data);
       if (parsed.leads) {
          parsed.leads.forEach(l => {
-           console.log(`- ${l.name} | ${l.email || 'No Email'} | ${l.contactMethod} | ${l.entityType} | ${l.profileUrl}`);
+           console.log(`- ${l.name} | ${l.email || 'No Email'} | ${l.contactMethod} | ${l.audienceMatch} | [Reason: ${l.audienceReasoning}] | ${l.profileUrl}`);
          });
       } else {
          console.log(parsed);
