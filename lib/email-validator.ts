@@ -68,7 +68,65 @@ export function guessEmailPatterns(firstName: string, lastName: string, domain: 
   return patterns;
 }
 
+export const PLATFORM_DOMAIN_BLOCKLIST = new Set([
+  'substack.com',
+  'medium.com',
+  'tumblr.com',
+  'reddit.com',
+  'quora.com',
+  'twitter.com',
+  'x.com',
+  'linkedin.com',
+  'youtube.com',
+  'facebook.com',
+  'instagram.com',
+  'pinterest.com',
+  'tiktok.com',
+  'threads.net',
+  'github.com',
+  'gitlab.com',
+  'bitbucket.org',
+  'discord.com',
+  'wordpress.com',
+  'blogspot.com',
+  'wixsite.com',
+  'weebly.com',
+  'squarespace.com',
+  'notion.site',
+  'bsky.app',
+  'bluesky.social',
+  'xenforo.com',
+  'discourse.org',
+  'linktr.ee',
+  'beacons.ai',
+  'carrd.co',
+  'google.com',
+  'yahoo.com',
+  'gmail.com',
+  'outlook.com',
+  'hotmail.com',
+  'icloud.com',
+  'protonmail.com',
+  'proton.me',
+  'aol.com'
+]);
+
+export function isPlatformDomain(domain: string): boolean {
+  if (!domain) return true;
+  const clean = domain.trim().toLowerCase().replace(/^www\./, '');
+  for (const platform of PLATFORM_DOMAIN_BLOCKLIST) {
+    if (clean === platform || clean.endsWith(`.${platform}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function findValidEmail(name: string, domain: string): Promise<{email: string, confidence: 'low', emailType: 'guessed'} | null> {
+  if (!domain || isPlatformDomain(domain)) {
+    return null;
+  }
+
   const nameParts = name.trim().split(" ");
   const firstName = nameParts[0];
   const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : "";

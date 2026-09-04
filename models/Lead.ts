@@ -8,8 +8,10 @@ const LeadSchema = new Schema<ILead>(
     userId: { type: String, required: true },
     trackingId: { type: String, default: () => crypto.randomUUID(), index: true },
     name: { type: String, required: true },
-    email: { type: String, required: true },
-    confidence: { type: String, enum: ['verified', 'guessed'], default: 'verified' },
+    email: { type: String, default: '' },
+    contactMethod: { type: String, enum: ['email', 'source-only'], default: 'email' },
+    contactSource: { type: String, default: '' },
+    confidence: { type: String, default: 'verified' },
     profileUrl: { type: String },
     source: { type: String },
     summary: { type: String },
@@ -26,6 +28,7 @@ const LeadSchema = new Schema<ILead>(
 );
 
 LeadSchema.index({ userId: 1, email: 1 });
+LeadSchema.index({ userId: 1, contactSource: 1 });
 
 export const Lead: Model<ILead> =
   mongoose.models.Lead || mongoose.model<ILead>('Lead', LeadSchema);

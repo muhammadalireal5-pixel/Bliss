@@ -16,8 +16,10 @@ export default function LeadProfileCard({ activeLead, selectedLeadIndex, setLead
   const { success } = useToast();
 
   const handleCopyEmail = () => {
-    navigator.clipboard.writeText(activeLead.email);
-    success('Email copied to clipboard');
+    if (activeLead.email) {
+      navigator.clipboard.writeText(activeLead.email);
+      success('Email copied to clipboard');
+    }
   };
 
   return (
@@ -28,6 +30,11 @@ export default function LeadProfileCard({ activeLead, selectedLeadIndex, setLead
           <div className="flex items-center gap-3 flex-wrap">
             <h2 className="text-xl font-bold text-slate-900 truncate">{activeLead.name}</h2>
             <Badge variant="outline">{activeLead.source || 'Web'}</Badge>
+            {activeLead.contactMethod === 'source-only' || !activeLead.email ? (
+              <Badge variant="warning">SOURCE ONLY</Badge>
+            ) : (
+              <Badge variant="success">EMAIL READY</Badge>
+            )}
             {activeLead.profileUrl && (
               <a 
                 href={activeLead.profileUrl} 
@@ -42,17 +49,35 @@ export default function LeadProfileCard({ activeLead, selectedLeadIndex, setLead
           </div>
           
           <div className="flex items-center gap-2 mt-2 flex-wrap">
-            <div className="flex items-center gap-2 bg-slate-50 pl-3 pr-1.5 py-1.5 rounded-lg border border-slate-200">
-              <span className="text-xs font-mono text-slate-700 font-medium truncate max-w-[200px] sm:max-w-xs">{activeLead.email}</span>
-              <button 
-                onClick={handleCopyEmail}
-                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                title="Copy Email Address"
-                aria-label="Copy email address"
-              >
-                <Copy size={14} />
-              </button>
-            </div>
+            {activeLead.contactMethod === 'source-only' || !activeLead.email ? (
+              <div className="flex items-center gap-2 bg-amber-50/80 px-3 py-1.5 rounded-lg border border-amber-200">
+                <span className="text-xs font-semibold text-amber-900">Manual Outreach:</span>
+                {activeLead.contactSource ? (
+                  <a
+                    href={activeLead.contactSource.startsWith('http') ? activeLead.contactSource : `https://${activeLead.contactSource}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 max-w-[240px] truncate"
+                  >
+                    {activeLead.contactSource.replace(/^https?:\/\//, '')} <ArrowUpRight size={12} />
+                  </a>
+                ) : (
+                  <span className="text-xs text-amber-700 italic">No email found — use profile URL</span>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 bg-slate-50 pl-3 pr-1.5 py-1.5 rounded-lg border border-slate-200">
+                <span className="text-xs font-mono text-slate-700 font-medium truncate max-w-[200px] sm:max-w-xs">{activeLead.email}</span>
+                <button 
+                  onClick={handleCopyEmail}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  title="Copy Email Address"
+                  aria-label="Copy email address"
+                >
+                  <Copy size={14} />
+                </button>
+              </div>
+            )}
           </div>
 
           {activeLead.summary && (

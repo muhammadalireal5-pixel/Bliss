@@ -17,12 +17,18 @@ export default function EmailEditor({ activeLead, selectedLeadIndex, setLeads, r
   const { success, error } = useToast();
   const [sending, setSending] = useState(false);
 
+  const isSourceOnly = activeLead.contactMethod === 'source-only' || !activeLead.email;
+
   const handleCopyDraft = () => {
     navigator.clipboard.writeText(activeLead.draftEmail);
-    success('Draft copied to clipboard!');
+    success(isSourceOnly ? 'Inquiry message copied to clipboard!' : 'Draft copied to clipboard!');
   };
 
   const handleSend = async () => {
+    if (isSourceOnly || !activeLead.email) {
+      error('Cannot send email: This lead has no email address. Please copy the message and send via their contact page.');
+      return;
+    }
     if (!activeLead._id) {
       error('Cannot send: Lead must be saved first');
       return;
@@ -68,9 +74,15 @@ export default function EmailEditor({ activeLead, selectedLeadIndex, setLeads, r
         <div className="flex items-center gap-4">
           <label className="label w-16 text-right mb-0">To</label>
           <div className="flex items-center flex-1">
-            <span className="text-xs font-mono bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-slate-700 font-medium truncate">
-              {activeLead.email}
-            </span>
+            {isSourceOnly ? (
+              <span className="text-xs bg-amber-50 border border-amber-200 text-amber-900 px-3 py-1.5 rounded-lg font-medium truncate">
+                No Email — Website Contact Form Outreach
+              </span>
+            ) : (
+              <span className="text-xs font-mono bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-slate-700 font-medium truncate">
+                {activeLead.email}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -88,7 +100,7 @@ export default function EmailEditor({ activeLead, selectedLeadIndex, setLeads, r
                   return updated;
                 });
               }}
-              placeholder="Email Subject"
+              placeholder={isSourceOnly ? "Inquiry headline (optional for contact form)" : "Email Subject"}
             />
           </div>
         </div>
@@ -128,26 +140,28 @@ export default function EmailEditor({ activeLead, selectedLeadIndex, setLeads, r
           Regenerate
         </Button>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <Button 
-            variant="secondary"
+            variant={isSourceOnly ? "primary" : "secondary"}
             size="sm"
             onClick={handleCopyDraft}
             icon={<Copy size={14} />}
             aria-label="Copy email draft"
           >
-            Copy Draft
+            {isSourceOnly ? "Copy Message for Contact Form" : "Copy Draft"}
           </Button>
-          <Button 
-            variant="primary"
-            size="sm"
-            icon={<Send size={14} />}
-            loading={sending}
-            onClick={handleSend}
-            disabled={activeLead.status === 'sent'}
-          >
-            Send
-          </Button>
+          {!isSourceOnly && (
+            <Button 
+              variant="primary"
+              size="sm"
+              icon={<Send size={14} />}
+              loading={sending}
+              onClick={handleSend}
+              disabled={activeLead.status === 'sent'}
+            >
+              Send
+            </Button>
+          )}
         </div>
       </div>
     </div>

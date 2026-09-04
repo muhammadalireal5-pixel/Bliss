@@ -215,29 +215,47 @@ export async function regenerateLeadEmail(params: RegenerateLeadEmailParams): Pr
 
 function buildBatchPrompt(params: GenerateBatchParams): string {
   const bannedPhrases = FLATTERY_BLACKLIST.map(p => `"${p}"`).join(", ");
-  const leadsJson = JSON.stringify(params.leads, null, 2);
+  const leadsClean = params.leads.map(l => ({
+    name: l.name,
+    summary: l.summary,
+    source: l.source,
+    contactMethod: l.contactMethod || (l.email ? 'email' : 'source-only')
+  }));
+  const leadsJson = JSON.stringify(leadsClean, null, 2);
   
   return `
 You are an expert sales and outreach copywriter. 
-Write highly effective, personalized cold emails for a list of leads based on the following campaign context:
+Write highly effective, personalized outreach messages for a list of leads based on the following campaign context:
 
 Target Audience: ${params.targetAudience}
 Reason for Outreach: ${params.reasonForOutreach}
 What we are offering: ${params.offering}
 Desired Tone: ${params.tone || 'professional'}
 
-Here is the JSON array of leads to write emails for:
+Here is the JSON array of leads:
 ${leadsJson}
 
-Instructions:
-1. Generate an array of JSON objects. Each object must have a "subject" and a "body".
+CRITICAL DELIVERY METHOD INSTRUCTIONS PER LEAD:
+Each lead has a "contactMethod" field:
+1. For leads with contactMethod = "email":
+   - Write a complete cold email with an engaging subject line.
+   - Body format: Salutation, conversational intro, brief value proposition, short CTA, and sign-off.
+   - Length: ~100-120 words with line breaks (\\n\\n).
+2. For leads with contactMethod = "source-only":
+   - This message will be submitted via a website contact form or portfolio inquiry form.
+   - Set "subject" to a concise inquiry headline (e.g. "Collaboration inquiry" or "Quick note regarding your work").
+   - Body: DO NOT say "I am emailing you", "I found your email", or reference inboxes. Say "I came across your work" or "Reaching out via your website".
+   - Keep it short and punchy (~50-80 words) as contact forms have character limits.
+   - Direct CTA asking if they are open to connecting.
+
+General Instructions:
+1. Generate an array of JSON objects. Each object must have "subject" and "body".
 2. The array you return MUST be exactly in the same order as the provided leads array, and must have exactly ${params.leads.length} items.
-3. The "body" MUST include proper line breaks (\\n\\n) to format it as a standard email with paragraphs (Greeting, Body, Sign-off). Do not write a single block of text.
-4. Keep the body concise (~120 words).
-5. DO NOT use these banned phrases: ${bannedPhrases}
-6. AVOID typical AI marketing words like: delve, unlock, synergy, transform, revolutionary, elevate, innovative.
-7. Write at a 5th-grade reading level. Keep sentences short, conversational, and direct.
-8. Sign off professionally.
+3. Use proper line breaks (\\n\\n).
+4. DO NOT use these banned phrases: ${bannedPhrases}
+5. AVOID typical AI marketing words like: delve, unlock, synergy, transform, revolutionary, elevate, innovative, seamless, robust.
+6. Write at a 5th-grade reading level. Keep sentences short, conversational, and direct.
+7. Sign off professionally.
 `.trim();
 }
 

@@ -33,10 +33,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
 
-    // Find all leads in this campaign that are in draft state and have a draftEmail
+    // Find all leads in this campaign that are in draft state, have a confirmed email, and have draftEmail
     const leadsToSend = await Lead.find({ 
       campaignId, 
       status: 'draft',
+      contactMethod: { $ne: 'source-only' },
+      email: { $exists: true, $ne: '' },
       draftEmail: { $ne: '' }
     }).select('_id').lean();
 

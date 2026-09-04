@@ -71,6 +71,11 @@ Make it sound natural, casual, and brief. Return JSON with { "subject": string, 
           }
         }
 
+        if (!lead.email || lead.contactMethod === 'source-only') {
+          console.warn(`[ProcessQueue] Lead ${lead._id} has no email or is source-only. Skipping send.`);
+          continue;
+        }
+
         const result = await sendEmail(job.userId, lead.email, subject, body, lead.trackingId);
         
         if (result.success) {
