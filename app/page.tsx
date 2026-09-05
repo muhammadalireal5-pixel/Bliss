@@ -170,7 +170,7 @@ export default function Home() {
       const foundLeads = searchData.leads || [];
 
       if (foundLeads.length === 0) {
-        warning('No profiles with public emails found. Try a different audience or search term.');
+        warning('No leads or profiles found. Try a different audience or search term.');
         setLoading(false);
         return;
       }
@@ -205,19 +205,23 @@ export default function Home() {
         
         leadsWithEmails = foundLeads.map((lead: any, index: number) => {
           const gen = generatedEmails[index];
+          const isSourceOnly = lead.contactMethod === 'source-only' || !lead.email;
+
           if (!gen || !gen.draftEmail) {
             failedCount++;
             return {
               ...lead,
-              subject: `Opportunity for ${lead.name}`,
-              draftEmail: `Hi ${lead.name},\n\nI came across your profile and wanted to reach out regarding ${offering}.\n\nWould love to connect and discuss further.\n\nBest,\n[Your Name]`,
+              subject: isSourceOnly ? `Collaboration Inquiry` : `Opportunity for ${lead.name}`,
+              draftEmail: isSourceOnly
+                ? `Hi ${lead.name},\n\nI came across your work via your website and wanted to reach out regarding ${offering}.\n\nWould love to connect if you're open to it.\n\nBest,\n[Your Name]`
+                : `Hi ${lead.name},\n\nI came across your profile and wanted to reach out regarding ${offering}.\n\nWould love to connect and discuss further.\n\nBest,\n[Your Name]`,
               status: 'draft' as const,
               generationFailed: true
             };
           }
           return {
             ...lead,
-            subject: gen.subject || `Opportunity for ${lead.name}`,
+            subject: gen.subject || (isSourceOnly ? `Collaboration Inquiry` : `Opportunity for ${lead.name}`),
             draftEmail: gen.draftEmail,
             status: 'draft' as const,
             generationFailed: false
@@ -227,13 +231,18 @@ export default function Home() {
       } catch (err: any) {
         console.error('Batch generation error:', err);
         failedCount = foundLeads.length;
-        leadsWithEmails = foundLeads.map((lead: any) => ({
-          ...lead,
-          subject: `Opportunity for ${lead.name}`,
-          draftEmail: `Hi ${lead.name},\n\nI came across your profile and wanted to reach out regarding ${offering}.\n\nWould love to connect and discuss further.\n\nBest,\n[Your Name]`,
-          status: 'draft' as const,
-          generationFailed: true
-        }));
+        leadsWithEmails = foundLeads.map((lead: any) => {
+          const isSourceOnly = lead.contactMethod === 'source-only' || !lead.email;
+          return {
+            ...lead,
+            subject: isSourceOnly ? `Collaboration Inquiry` : `Opportunity for ${lead.name}`,
+            draftEmail: isSourceOnly
+              ? `Hi ${lead.name},\n\nI came across your work via your website and wanted to reach out regarding ${offering}.\n\nWould love to connect if you're open to it.\n\nBest,\n[Your Name]`
+              : `Hi ${lead.name},\n\nI came across your profile and wanted to reach out regarding ${offering}.\n\nWould love to connect and discuss further.\n\nBest,\n[Your Name]`,
+            status: 'draft' as const,
+            generationFailed: true
+          };
+        });
       }
 
       setLeads(leadsWithEmails);

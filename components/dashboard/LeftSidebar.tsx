@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Users, History, X, ChevronRight, Settings, Filter } from 'lucide-react';
+import { Plus, Users, History, X, ChevronRight, Settings, Filter, Download } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { signOut } from 'next-auth/react';
 import { LeadData } from '@/types';
 import { TabId } from '@/components/ui/MobileTabBar';
+import { exportLeadsToCsv } from '@/lib/csv-export';
 
 const SkeletonCard = () => (
   <div className="w-full p-3.5 rounded-xl bg-zinc-900/30 border border-zinc-900/40 animate-pulse">
@@ -51,7 +52,7 @@ export default function LeftSidebar({
   const mobileHiddenClass = activeMobileTab !== 'leads' ? 'hidden md:flex' : 'flex';
   
   const displayedLeads = showVerifiedOnly 
-    ? leads.filter(l => l.confidence !== 'guessed' && !l.alreadyContacted)
+    ? leads.filter(l => l.contactMethod === 'email' && !l.alreadyContacted)
     : leads;
 
   return (
@@ -116,14 +117,21 @@ export default function LeftSidebar({
               <button
                 onClick={() => setShowVerifiedOnly(!showVerifiedOnly)}
                 className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded transition-colors ${showVerifiedOnly ? 'bg-primary/20 text-primary' : 'text-zinc-500 hover:text-zinc-300'}`}
-                title="Filter Verified & Uncontacted"
+                title="Filter Email Ready Only"
               >
-                <Filter size={10} /> {showVerifiedOnly ? 'Filtered' : 'All'}
+                <Filter size={10} /> {showVerifiedOnly ? 'Email Ready' : 'All'}
               </button>
             )}
           </div>
           {leads.length > 0 && (
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              <button 
+                onClick={() => exportLeadsToCsv(leads, 'leads')}
+                className="text-[10px] text-zinc-300 hover:text-primary transition-colors font-bold flex items-center gap-1 uppercase tracking-wide focus:outline-none focus-visible:underline"
+                title="Export all leads to CSV"
+              >
+                <Download size={11} /> CSV
+              </button>
               <button 
                 onClick={() => setIsManualModalOpen(true)}
                 className="text-[10px] text-primary hover:text-primary-hover transition-colors font-bold flex items-center gap-1 uppercase tracking-wide focus:outline-none focus-visible:underline"
@@ -135,7 +143,7 @@ export default function LeftSidebar({
                   onClick={() => setIsCsvModalOpen(true)}
                   className="text-[10px] text-primary hover:text-primary-hover transition-colors font-bold flex items-center gap-1 uppercase tracking-wide focus:outline-none focus-visible:underline"
                 >
-                  + CSV
+                  Import
                 </button>
               )}
             </div>
@@ -164,9 +172,11 @@ export default function LeftSidebar({
             displayedLeads.map((lead, idx) => {
               const originalIndex = leads.indexOf(lead);
               const isSelected = selectedLeadIndex === originalIndex;
+              const isSourceOnly = lead.contactMethod === 'source-only' || !lead.email;
+
               return (
                 <button
-                  key={`${lead.email}-${idx}`}
+                  key={`${lead.email || lead.profileUrl || lead.name}-${idx}`}
                   onClick={() => setSelectedLeadIndex(originalIndex)}
                   className={`w-full text-left p-3.5 rounded-xl cursor-pointer transition-colors duration-150 relative group flex gap-3 items-start border focus:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
                     isSelected 
@@ -187,14 +197,16 @@ export default function LeftSidebar({
                     }`}>{lead.name}</h4>
                     <p className={`text-[11px] truncate mt-0.5 ${
                       isSelected ? 'text-zinc-800 font-medium' : 'text-zinc-400'
-                    }`}>{lead.email}</p>
+                    }`}>
+                      {isSourceOnly ? (lead.contactSource || lead.profileUrl || 'Manual Outreach') : lead.email}
+                    </p>
                     
                     <div className="flex items-center flex-wrap gap-1.5 mt-2.5">
                       <Badge variant={isSelected ? 'default' : 'muted'}>{lead.source || 'Web'}</Badge>
-                      {lead.confidence === 'guessed' ? (
-                        <Badge variant={isSelected ? 'default' : 'warning'}>? GUESSED</Badge>
+                      {isSourceOnly ? (
+                        <Badge variant={isSelected ? 'default' : 'warning'}>SOURCE ONLY</Badge>
                       ) : (
-                        <Badge variant={isSelected ? 'default' : 'success'}>✓ VERIFIED</Badge>
+                        <Badge variant={isSelected ? 'default' : 'success'}>EMAIL READY</Badge>
                       )}
                       {lead.alreadyContacted && (
                         <Badge variant={isSelected ? 'default' : 'error'}>CONTACTED</Badge>

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Layers, TrendingUp, Send, X, Eye, MousePointerClick, Reply, Mail } from 'lucide-react';
+import { Layers, TrendingUp, Send, X, Eye, MousePointerClick, Reply, Mail, Download, UserCheck, Globe } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { TabId } from '@/components/ui/MobileTabBar';
 import { LeadData } from '@/types';
 import { useToast } from '@/components/ui/Toast';
+import { exportLeadsToCsv } from '@/lib/csv-export';
 
 interface RightSidebarProps {
   isRightSidebarOpen: boolean;
@@ -26,6 +27,9 @@ export default function RightSidebar({
   const { success, error } = useToast();
   const [sendingAll, setSendingAll] = useState(false);
 
+  const emailReadyCount = leads.filter(l => l.contactMethod === 'email' || Boolean(l.email)).length;
+  const sourceOnlyCount = leads.filter(l => l.contactMethod === 'source-only' || !l.email).length;
+
   const totalOpens = leads.reduce((sum, l) => sum + (l.opens || 0), 0);
   const totalClicks = leads.reduce((sum, l) => sum + (l.clicks || 0), 0);
   const totalReplies = leads.reduce((sum, l) => sum + (l.replies || 0), 0);
@@ -45,8 +49,7 @@ export default function RightSidebar({
       });
       const data = await res.json();
       if (res.ok) {
-        success(`Queued ${data.queuedCount} emails to send.`);
-        // Note: the leads array would ideally update state to 'queued', but they will reload anyway when user refreshes.
+        success(`Queued ${data.queuedCount || emailReadyCount} emails to send.`);
       } else {
         console.error(data.error);
         error('Failed to queue emails');
@@ -111,9 +114,25 @@ export default function RightSidebar({
 
               <div className="bg-primary/10 rounded-2xl p-5 border border-primary/30 space-y-4">
                 <div className="flex items-center gap-2 text-black font-bold text-xs uppercase tracking-wide">
-                  <TrendingUp size={16} strokeWidth={2.5} /> Progress Details
+                  <TrendingUp size={16} strokeWidth={2.5} /> Lead Breakdown
                 </div>
-                <div className="space-y-2.5">
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-white p-2.5 rounded-xl border border-primary/20">
+                    <span className="text-[10px] font-bold text-emerald-700 uppercase flex items-center gap-1">
+                      <UserCheck size={12} /> Email Ready
+                    </span>
+                    <span className="text-base font-bold text-slate-900 mt-0.5 block">{emailReadyCount}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-primary/20">
+                    <span className="text-[10px] font-bold text-amber-700 uppercase flex items-center gap-1">
+                      <Globe size={12} /> Source Only
+                    </span>
+                    <span className="text-base font-bold text-slate-900 mt-0.5 block">{sourceOnlyCount}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2.5 pt-1">
                   <div className="flex justify-between text-xs font-bold">
                     <span className="text-slate-600">Secured Leads</span>
                     <span className="text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">{securedLeads} / {totalLeads}</span>
@@ -146,16 +165,28 @@ export default function RightSidebar({
                 </div>
               </div>
               
-              <Button 
-                variant="primary"
-                className="w-full py-3 mt-2"
-                icon={<Send size={16} />}
-                onClick={handleSendAll}
-                disabled={!campaignId}
-                loading={sendingAll}
-              >
-                Send All Drafts
-              </Button>
+              <div className="space-y-2">
+                <Button 
+                  variant="primary"
+                  className="w-full py-3"
+                  icon={<Send size={16} />}
+                  onClick={handleSendAll}
+                  disabled={!campaignId || emailReadyCount === 0}
+                  loading={sendingAll}
+                >
+                  Send All ({emailReadyCount} Emails)
+                </Button>
+
+                <Button 
+                  variant="secondary"
+                  className="w-full py-2.5 text-xs font-bold"
+                  icon={<Download size={14} />}
+                  onClick={() => exportLeadsToCsv(leads, targetAudience ? `leads-${targetAudience}` : 'leads')}
+                  disabled={leads.length === 0}
+                >
+                  Export All Leads to CSV
+                </Button>
+              </div>
             </div>
           ) : (
             <EmptyState 

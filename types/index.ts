@@ -23,7 +23,9 @@ export interface ILead extends mongoose.Document {
   userId: string;
   trackingId: string;
   name: string;
-  email: string;
+  email?: string;
+  contactMethod: 'email' | 'source-only';
+  contactSource?: string;
   confidence: 'verified' | 'guessed';
   profileUrl?: string;
   source?: string;
@@ -45,11 +47,14 @@ export interface LeadData {
   userId?: string;
   trackingId?: string;
   name: string;
-  email: string;
-  confidence?: 'verified' | 'guessed';
+  email?: string;
+  contactMethod?: 'email' | 'source-only';
+  contactSource?: string;
+  confidence?: 'verified' | 'guessed' | 'high' | 'medium' | 'low';
   alreadyContacted?: boolean;
   source?: string;
   profileUrl?: string;
+  queryType?: string;
   summary?: string;
   subject: string;
   draftEmail: string;
@@ -78,6 +83,12 @@ export interface GenerateTemplateParams {
 
 export interface GeminiLeadData {
   name?: string;
+  email?: string;
+  contactMethod?: 'email' | 'source-only';
+  contactSource?: string;
+  source?: string;
+  summary?: string;
+  profileUrl?: string;
   company?: string;
   industry?: string;
   bioSnippet?: string;

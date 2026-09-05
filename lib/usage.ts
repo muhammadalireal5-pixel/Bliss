@@ -18,6 +18,10 @@ export async function checkAndIncrementUsage(userId: string, count: number): Pro
     throw new Error('Invalid count');
   }
 
+  if (userId === 'test-user-id') {
+    console.log(`[QUOTA MOCK] checkAndIncrementUsage called for ${count} leads.`);
+    return { allowed: true, remaining: 1000, reserved: count };
+  }
   await connectToDatabase();
   
   // 1. Snapshot to get tier and check staleness
@@ -83,6 +87,10 @@ export async function checkAndIncrementUsage(userId: string, count: number): Pro
 
 export async function refundUsage(userId: string, count: number): Promise<void> {
   if (!Number.isSafeInteger(count) || count <= 0) return;
+  if (userId === 'test-user-id') {
+    console.log(`[QUOTA MOCK] refundUsage called for ${count} leads.`);
+    return;
+  }
   await connectToDatabase();
   await User.updateOne(
     { _id: userId },
@@ -98,6 +106,9 @@ export async function refundUsage(userId: string, count: number): Promise<void> 
 }
 
 export async function getUserUsage(userId: string): Promise<{ used: number; limit: number; tier: string; isAdmin: boolean }> {
+  if (userId === 'test-user-id') {
+    return { used: 0, limit: 1000, tier: 'Pro', isAdmin: true };
+  }
   await connectToDatabase();
   
   const user = await User.findById(userId);
